@@ -2,5 +2,14 @@
 name = "icofon"
 version = "0.1.0"
 edition = "2024"
+description = "Build an icon font (TTF + CSS) from a folder of SVG files"
 
 [dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+kurbo = "0.13"
+usvg = { version = "0.48", default-features = false }
+write-fonts = "0.52"
+
+[dev-dependencies]
+read-fonts = "0.43"
