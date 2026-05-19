@@ -2,6 +2,7 @@
 
 mod css;
 mod font;
+mod html;
 mod svg;
 
 use std::collections::BTreeSet;
@@ -28,6 +29,14 @@ struct Args {
     /// Path of the stylesheet to write (defaults to the font path with a .css extension).
     #[arg(long, value_name = "PATH")]
     css: Option<PathBuf>,
+
+    /// Path of the preview page to write (defaults to example.html beside the stylesheet).
+    #[arg(long, value_name = "PATH")]
+    html: Option<PathBuf>,
+
+    /// Skip writing the preview page.
+    #[arg(long, conflicts_with = "html")]
+    no_html: bool,
 
     /// Font family name used in the font and in the CSS (defaults to the font file name).
     #[arg(long, value_name = "NAME")]
@@ -60,6 +69,14 @@ fn main() -> Result<()> {
         .css
         .clone()
         .unwrap_or_else(|| args.output.with_extension("css"));
+    let html_path = (!args.no_html).then(|| {
+        args.html.clone().unwrap_or_else(|| {
+            css_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("example.html")
+        })
+    });
 
     let icons = load_icons(&files, args.start)?;
 
@@ -68,18 +85,24 @@ fn main() -> Result<()> {
     // Both paths must exist before the url between them can be resolved, so the
     // stylesheet's directory is created up front rather than at write time.
     ensure_parent(&css_path)?;
-    let font_url = font_url(&css_path, &args.output);
+    let font_url = relative_url(&css_path, &args.output);
     write(
         &css_path,
         css::render(&icons, &family, &args.prefix, &font_url).as_bytes(),
     )?;
 
-    println!(
-        "{} icons -> {} + {}",
-        icons.len(),
-        args.output.display(),
-        css_path.display()
-    );
+    let mut written = format!("{} + {}", args.output.display(), css_path.display());
+    if let Some(html_path) = &html_path {
+        ensure_parent(html_path)?;
+        let css_url = relative_url(html_path, &css_path);
+        write(
+            html_path,
+            html::render(&icons, &family, &args.prefix, &css_url).as_bytes(),
+        )?;
+        written.push_str(&format!(" + {}", html_path.display()));
+    }
+
+    println!("{} icons -> {written}", icons.len());
     Ok(())
 }
 
@@ -223,22 +246,22 @@ fn parse_codepoint(value: &str) -> Result<char, String> {
         .ok_or_else(|| format!("'{value}' is not a Unicode codepoint in hex"))
 }
 
-/// The `url()` to put in the stylesheet: the font's location relative to the
-/// stylesheet, so the pair keeps working wherever it is deployed.
+/// A url pointing at `target` from the page or stylesheet at `from`, so that
+/// generated files keep referring to each other wherever they are deployed.
 ///
 /// Falls back to the bare file name, which is right for the common case of both
 /// files sharing a directory.
-fn font_url(css_path: &Path, font_path: &Path) -> String {
-    let name = font_path
+fn relative_url(from: &Path, target: &Path) -> String {
+    let name = target
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "font.ttf".to_string());
+        .unwrap_or_default();
 
-    let css_dir = css_path.parent().unwrap_or(Path::new("."));
-    let relative = std::fs::canonicalize(css_dir)
+    let from_dir = from.parent().unwrap_or(Path::new("."));
+    let relative = std::fs::canonicalize(from_dir)
         .ok()
-        .zip(std::fs::canonicalize(font_path).ok())
-        .and_then(|(dir, font)| relative_path(&dir, &font));
+        .zip(std::fs::canonicalize(target).ok())
+        .and_then(|(dir, target)| relative_path(&dir, &target));
 
     escape_url(&relative.unwrap_or(name))
 }
