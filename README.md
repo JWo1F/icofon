@@ -6,8 +6,15 @@ Build an icon font and a matching stylesheet from a folder of SVG files.
 icofon ./folder font.ttf
 ```
 
-That reads every `.svg` in `./folder`, writes `font.ttf`, and writes `font.css`
-next to it. Drop both on a page and the icons are available as CSS classes:
+That reads every `.svg` in `./folder` and writes three files next to it:
+
+| File | What it is |
+| --- | --- |
+| `font.ttf` | the icon font |
+| `font.css` | `@font-face` plus one class per icon |
+| `example.html` | a searchable preview of every icon |
+
+Drop the first two on a page and the icons are available as CSS classes:
 
 ```html
 <link rel="stylesheet" href="font.css">
@@ -37,6 +44,22 @@ cargo install --path .
 The em box runs from 200 units below the baseline to 800 above it, which puts
 icons at the height that lines up with running text without extra CSS.
 
+## The preview page
+
+`example.html` lists every icon in a grid, each card showing the glyph, its
+name, its CSS class and its codepoint. Search filters on all three — type a
+name, a class or a hex code — and clicking a class name copies it.
+
+It links the generated stylesheet, so it renders with exactly the CSS a site
+would use. Its own layout comes from the [Tailwind browser build][tw] loaded
+from a CDN, which compiles utility classes at page load; that keeps the page
+buildless, but it does mean the preview needs network access to look right. The
+font and stylesheet have no such dependency.
+
+Use `--html <PATH>` to put it somewhere else, or `--no-html` to skip it.
+
+[tw]: https://tailwindcss.com/docs/installation/play-cdn
+
 ## Names and codepoints
 
 The file name becomes the CSS class, lowercased and slugified:
@@ -64,13 +87,15 @@ error rather than a silently dropped glyph.
 icofon <INPUT> <OUTPUT> [OPTIONS]
 
   --css <PATH>          Stylesheet path (default: OUTPUT with a .css extension)
+  --html <PATH>         Preview page path (default: example.html beside the stylesheet)
+  --no-html             Skip the preview page
   --font-family <NAME>  Family name in the font and the CSS (default: output file name)
   --prefix <PREFIX>     CSS class prefix (default: icon)
   --start <HEX>         First codepoint to assign (default: e900)
 ```
 
-The `url()` in the stylesheet is written relative to wherever the stylesheet
-lands, so `--css` pointing at a different directory still resolves.
+Generated files link each other by relative path, so pointing `--css` or
+`--html` at a different directory still resolves.
 
 ## Example
 
@@ -79,5 +104,5 @@ icofon examples/icons dist/icons.ttf --font-family "My Icons" --prefix ico
 ```
 
 ```
-6 icons -> dist/icons.ttf + dist/icons.css
+6 icons -> dist/icons.ttf + dist/icons.css + dist/example.html
 ```
