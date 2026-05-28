@@ -3,15 +3,17 @@
 mod css;
 mod font;
 mod html;
+mod manifest;
 mod svg;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use font::Icon;
+use manifest::Manifest;
 
 #[derive(Parser)]
 #[command(
@@ -37,6 +39,16 @@ struct Args {
     /// Skip writing the preview page.
     #[arg(long, conflicts_with = "html")]
     no_html: bool,
+
+    /// Path of the codepoint manifest, which keeps codepoints stable across
+    /// builds (defaults to icofon.json inside the icon folder).
+    #[arg(long, value_name = "PATH")]
+    manifest: Option<PathBuf>,
+
+    /// Do not read or write the codepoint manifest. Codepoints are then assigned
+    /// from scratch on every build and will move as icons are added.
+    #[arg(long, conflicts_with = "manifest")]
+    no_manifest: bool,
 
     /// Font family name used in the font and in the CSS (defaults to the font file name).
     #[arg(long, value_name = "NAME")]
@@ -78,7 +90,17 @@ fn main() -> Result<()> {
         })
     });
 
-    let icons = load_icons(&files, args.start)?;
+    let manifest_path = (!args.no_manifest).then(|| {
+        args.manifest
+            .clone()
+            .unwrap_or_else(|| args.input.join(manifest::DEFAULT_FILE))
+    });
+    let mut manifest = match &manifest_path {
+        Some(path) => Manifest::load(path)?,
+        None => Manifest::default(),
+    };
+
+    let icons = load_icons(&files, args.start, &manifest)?;
 
     let font = font::build(&icons, &family)?;
     write(&args.output, &font)?;
@@ -102,64 +124,134 @@ fn main() -> Result<()> {
         written.push_str(&format!(" + {}", html_path.display()));
     }
 
+    if let Some(manifest_path) = &manifest_path {
+        for icon in &icons {
+            manifest.insert(&icon.name, icon.codepoint);
+        }
+        ensure_parent(manifest_path)?;
+        manifest.save(manifest_path)?;
+        written.push_str(&format!(" + {}", manifest_path.display()));
+    }
+
     println!("{} icons -> {written}", icons.len());
     Ok(())
 }
 
-/// Every `.svg` directly inside `dir`, sorted by file name so that automatic
-/// codepoint assignment is stable across runs.
-fn collect_svgs(dir: &Path) -> Result<Vec<PathBuf>> {
+/// An SVG found in the icon folder, with the subfolder it came from.
+struct SvgFile {
+    path: PathBuf,
+    /// Path of the containing subfolder relative to the icon folder, used to
+    /// group the preview page. `None` for icons sitting at the top level.
+    group: Option<String>,
+}
+
+/// Every `.svg` in `dir` and its subfolders.
+///
+/// Sorted with top-level icons first, then by subfolder, then by file name, so
+/// that both the preview page and any automatic codepoint assignment come out
+/// the same on every run.
+fn collect_svgs(dir: &Path) -> Result<Vec<SvgFile>> {
+    let mut files = Vec::new();
+    walk(dir, None, &mut files)?;
+    files.sort_by(|a, b| {
+        // `None` sorts before `Some`, which puts ungrouped icons first.
+        (&a.group, &a.path).cmp(&(&b.group, &b.path))
+    });
+    Ok(files)
+}
+
+fn walk(dir: &Path, group: Option<&str>, out: &mut Vec<SvgFile>) -> Result<()> {
     let entries =
         std::fs::read_dir(dir).with_context(|| format!("reading directory {}", dir.display()))?;
 
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-        })
-        .collect();
-    files.sort();
-    Ok(files)
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let path = entry.path();
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        // Skip dotfiles and dot-directories, which are housekeeping, not icons.
+        if name.starts_with('.') {
+            continue;
+        }
+
+        if path.is_dir() {
+            let nested = match group {
+                Some(parent) => format!("{parent}/{name}"),
+                None => name,
+            };
+            walk(&path, Some(&nested), out)?;
+        } else if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+        {
+            out.push(SvgFile {
+                path,
+                group: group.map(str::to_string),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Parse each SVG and pair it with a name and a codepoint.
 ///
-/// A file named `uE901-heart.svg` pins its own codepoint; everything else is
-/// handed the next free one starting from `first`.
-fn load_icons(files: &[PathBuf], first: char) -> Result<Vec<Icon>> {
-    let mut names = BTreeSet::new();
+/// Codepoints come from three places, in order of precedence: a `uE901-` prefix
+/// on the file name, the manifest's record of a previous build, and finally the
+/// next free codepoint at or after `first`. The manifest is what keeps an icon's
+/// codepoint from moving when new icons are added around it.
+fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec<Icon>> {
+    let mut names: BTreeMap<String, &Path> = BTreeMap::new();
     let mut taken = BTreeSet::new();
+    let mut pinned_by: BTreeMap<char, String> = BTreeMap::new();
 
-    // Resolve names and explicit codepoints first, so that an explicitly
-    // requested codepoint is never stolen by an earlier auto-assigned icon.
+    // Resolve names and pinned codepoints first, so that a pinned codepoint is
+    // never stolen by an icon that happens to be processed earlier.
     let mut pending = Vec::with_capacity(files.len());
     for file in files {
-        let stem =
-            file_stem(file).with_context(|| format!("{} has no file name", file.display()))?;
+        let stem = file_stem(&file.path)
+            .with_context(|| format!("{} has no file name", file.path.display()))?;
         let (codepoint, name) = split_codepoint(&stem);
         let name = sanitize_name(&name);
         if name.is_empty() {
-            bail!("{} has no usable icon name", file.display());
+            bail!("{} has no usable icon name", file.path.display());
         }
-        if !names.insert(name.clone()) {
-            bail!("two icons would both be called '{name}'");
+        if let Some(first_seen) = names.insert(name.clone(), &file.path) {
+            bail!(
+                "two icons would both be called '{name}':\n  {}\n  {}\n\
+                 Icon names ignore subfolders, so rename one of them.",
+                first_seen.display(),
+                file.path.display()
+            );
         }
-        if let Some(codepoint) = codepoint
-            && !taken.insert(codepoint)
-        {
-            bail!("codepoint U+{:04X} is claimed twice", codepoint as u32);
+        if let Some(codepoint) = codepoint {
+            if !taken.insert(codepoint) {
+                bail!("codepoint U+{:04X} is claimed twice", codepoint as u32);
+            }
+            pinned_by.insert(codepoint, name.clone());
         }
         pending.push((file, name, codepoint));
     }
 
+    // Reserve everything the manifest has ever handed out, including to icons
+    // that have since been deleted, so a codepoint is never reused.
+    for codepoint in manifest.reserved() {
+        if let Some(owner) = pinned_by.get(&codepoint) {
+            // The pin wins, but only silently when it agrees with the record.
+            if manifest.get(owner) != Some(codepoint) {
+                bail!(
+                    "U+{:04X} is pinned by a file name but the manifest already gave it to \
+                     another icon; remove the pin or the manifest entry",
+                    codepoint as u32
+                );
+            }
+        }
+        taken.insert(codepoint);
+    }
+
     let mut next = first;
     let mut icons = Vec::with_capacity(pending.len());
-    for (file, name, codepoint) in pending {
-        let codepoint = match codepoint {
+    for (file, name, pinned) in pending {
+        let codepoint = match pinned.or_else(|| manifest.get(&name)) {
             Some(codepoint) => codepoint,
             None => {
                 let free = next_free(next, &taken)
@@ -171,8 +263,9 @@ fn load_icons(files: &[PathBuf], first: char) -> Result<Vec<Icon>> {
         };
         icons.push(Icon {
             name,
+            group: file.group.clone(),
             codepoint,
-            outline: svg::load(file)?,
+            outline: svg::load(&file.path)?,
         });
     }
     Ok(icons)
@@ -316,6 +409,138 @@ fn ensure_parent(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SQUARE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                              <rect width="24" height="24" fill="#000"/>
+                            </svg>"##;
+
+    /// A throwaway icon folder. Named per test so they can run in parallel.
+    fn icon_folder(test: &str, files: &[&str]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("icofon-test-{test}"));
+        std::fs::remove_dir_all(&dir).ok();
+        for file in files {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, SQUARE).unwrap();
+        }
+        dir
+    }
+
+    fn codepoints(icons: &[Icon]) -> BTreeMap<&str, char> {
+        icons
+            .iter()
+            .map(|i| (i.name.as_str(), i.codepoint))
+            .collect()
+    }
+
+    #[test]
+    fn subfolders_become_groups_without_touching_names() {
+        let dir = icon_folder(
+            "groups",
+            &["check.svg", "arrows/left.svg", "arrows/nested/up.svg"],
+        );
+        let files = collect_svgs(&dir).unwrap();
+        let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+
+        let groups: Vec<_> = icons
+            .iter()
+            .map(|i| (i.name.as_str(), i.group.as_deref()))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                // Top-level icons first, then subfolders in path order.
+                ("check", None),
+                ("left", Some("arrows")),
+                ("up", Some("arrows/nested")),
+            ]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn two_folders_cannot_hold_the_same_icon_name() {
+        let dir = icon_folder("collide", &["arrows/left.svg", "social/left.svg"]);
+        let files = collect_svgs(&dir).unwrap();
+        let error = load_icons(&files, '\u{e900}', &Manifest::default())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("would both be called 'left'"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn adding_an_icon_leaves_existing_codepoints_alone() {
+        let dir = icon_folder("stable", &["check.svg", "zoom.svg"]);
+        let files = collect_svgs(&dir).unwrap();
+        let first = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+        let before = codepoints(&first);
+        assert_eq!(before["check"], '\u{e900}');
+        assert_eq!(before["zoom"], '\u{e901}');
+
+        let mut manifest = Manifest::default();
+        for icon in &first {
+            manifest.insert(&icon.name, icon.codepoint);
+        }
+
+        // This one sorts before both existing icons, so without the manifest it
+        // would take U+E900 and shift everything after it.
+        std::fs::write(dir.join("aaa.svg"), SQUARE).unwrap();
+        let files = collect_svgs(&dir).unwrap();
+        let second = load_icons(&files, '\u{e900}', &manifest).unwrap();
+        let after = codepoints(&second);
+
+        assert_eq!(after["check"], '\u{e900}');
+        assert_eq!(after["zoom"], '\u{e901}');
+        assert_eq!(after["aaa"], '\u{e902}');
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_deleted_icons_codepoint_is_never_handed_to_another_icon() {
+        let mut manifest = Manifest::default();
+        manifest.insert("retired", '\u{e900}');
+
+        let dir = icon_folder("retired", &["fresh.svg"]);
+        let files = collect_svgs(&dir).unwrap();
+        let icons = load_icons(&files, '\u{e900}', &manifest).unwrap();
+
+        assert_eq!(icons[0].name, "fresh");
+        assert_eq!(icons[0].codepoint, '\u{e901}', "U+E900 is still reserved");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_pin_moves_the_icon_it_names() {
+        // Renaming heart.svg to uE9F0-heart.svg is a deliberate instruction to
+        // move that icon, so the pin wins over the icon's own record.
+        let mut manifest = Manifest::default();
+        manifest.insert("heart", '\u{e900}');
+
+        let dir = icon_folder("pin-moves", &["uE9F0-heart.svg"]);
+        let files = collect_svgs(&dir).unwrap();
+        let icons = load_icons(&files, '\u{e900}', &manifest).unwrap();
+
+        assert_eq!(icons[0].name, "heart");
+        assert_eq!(icons[0].codepoint, '\u{e9f0}');
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_pin_cannot_steal_another_icons_codepoint() {
+        // U+E900 already belongs to heart, so letting badge pin it would leave
+        // two icons fighting over one codepoint.
+        let mut manifest = Manifest::default();
+        manifest.insert("heart", '\u{e900}');
+
+        let dir = icon_folder("pin-steals", &["uE900-badge.svg", "heart.svg"]);
+        let files = collect_svgs(&dir).unwrap();
+        let error = load_icons(&files, '\u{e900}', &manifest)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("pinned by a file name"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn explicit_codepoints_are_recognised() {

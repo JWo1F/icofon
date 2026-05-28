@@ -42,7 +42,7 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
                 dark:placeholder:text-zinc-500 dark:focus:outline-blue-400">
 </header>
 
-<main id="grid" class="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
+<main>
 "#,
         family = family,
         css = escape(css_url),
@@ -50,30 +50,13 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
         total = icons.len(),
     ));
 
-    for icon in icons {
-        let class = format!("{prefix}-{}", icon.name);
-        let code = icon.codepoint as u32;
-        page.push_str(&format!(
-            r#"  <figure data-search="{search}"
-          class="card m-0 flex flex-col items-center gap-3 rounded-xl border border-zinc-200
-                 px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
-    <span class="{class} text-4xl leading-none" aria-hidden="true"></span>
-    <figcaption class="flex w-full flex-col items-center gap-1">
-      <span class="max-w-full text-[13px] font-medium break-all">{name}</span>
-      <button type="button" data-copy="{class}" title="Copy class name"
-              class="name max-w-full cursor-pointer rounded-md px-1.5 py-0.5 font-mono text-[12px]
-                     break-all text-zinc-500 hover:bg-blue-600/10 hover:text-blue-700
-                     dark:text-zinc-400 dark:hover:bg-blue-400/15
-                     dark:hover:text-blue-300">.{class}</button>
-      <code class="font-mono text-[11px] text-zinc-400 dark:text-zinc-500">U+{code:04X}</code>
-    </figcaption>
-  </figure>
-"#,
-            search = escape(&format!("{} {} {code:04x}", icon.name, class)),
-            class = escape(&class),
-            name = escape(&icon.name),
-            code = code,
-        ));
+    // Icons arrive sorted by group, so consecutive runs share a section.
+    for (group, members) in group_runs(icons) {
+        page.push_str(&section_open(group));
+        for icon in members {
+            page.push_str(&card(icon, prefix));
+        }
+        page.push_str("  </div>\n</section>\n");
     }
 
     page.push_str(&format!(
@@ -101,7 +84,83 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     page
 }
 
+/// Split the icons into consecutive runs sharing a group, preserving order.
+fn group_runs(icons: &[Icon]) -> Vec<(Option<&str>, &[Icon])> {
+    let mut runs = Vec::new();
+    let mut rest = icons;
+    while let Some(first) = rest.first() {
+        let group = first.group.as_deref();
+        let end = rest
+            .iter()
+            .position(|icon| icon.group.as_deref() != group)
+            .unwrap_or(rest.len());
+        let (run, remainder) = rest.split_at(end);
+        runs.push((group, run));
+        rest = remainder;
+    }
+    runs
+}
+
+/// Open a `<section>` for one group. Icons at the top level get a section with
+/// no heading, so an icon folder without subfolders looks exactly as before.
+fn section_open(group: Option<&str>) -> String {
+    let heading = match group {
+        Some(group) => format!(
+            r#"  <h2 class="mb-3 font-mono text-sm font-medium text-zinc-500 dark:text-zinc-400">{}</h2>
+"#,
+            escape(group)
+        ),
+        None => String::new(),
+    };
+    format!(
+        r#"<section class="group mb-8" data-group="{group}">
+{heading}  <div class="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
+"#,
+        group = escape(group.unwrap_or_default()),
+    )
+}
+
+fn card(icon: &Icon, prefix: &str) -> String {
+    let class = format!("{prefix}-{}", icon.name);
+    let code = icon.codepoint as u32;
+    format!(
+        r#"    <figure data-search="{search}"
+            class="card m-0 flex flex-col items-center gap-3 rounded-xl border border-zinc-200
+                   px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
+      <span class="{class} text-4xl leading-none" aria-hidden="true"></span>
+      <figcaption class="flex w-full flex-col items-center gap-1">
+        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>
+        <button type="button" data-copy="{class}" title="Copy class name"
+                class="name max-w-full cursor-pointer rounded-md px-1.5 py-0.5 font-mono text-[12px]
+                       break-all text-zinc-500 hover:bg-blue-600/10 hover:text-blue-700
+                       dark:text-zinc-400 dark:hover:bg-blue-400/15
+                       dark:hover:text-blue-300">.{class}</button>
+        <code class="font-mono text-[11px] text-zinc-400 dark:text-zinc-500">U+{code:04X}</code>
+      </figcaption>
+    </figure>
+"#,
+        // Searchable on name, class, hex code and group, in one flat haystack.
+        search = escape(
+            &[
+                icon.name.as_str(),
+                class.as_str(),
+                &format!("{code:04x}"),
+                icon.group.as_deref().unwrap_or_default(),
+            ]
+            .iter()
+            .filter(|part| !part.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
+        ),
+        class = escape(&class),
+        name = escape(&icon.name),
+        code = code,
+    )
+}
+
 const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.card'));
+  const groups = Array.from(document.querySelectorAll('.group'));
   const search = document.getElementById('search');
   const shown = document.getElementById('shown');
   const empty = document.getElementById('empty');
@@ -115,6 +174,13 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
       card.hidden = !match;
       card.classList.toggle('hidden', !match);
       if (match) visible++;
+    }
+    // A group whose icons have all been filtered out should take its heading
+    // with it, rather than leaving a label over an empty space.
+    for (const group of groups) {
+      const survives = group.querySelector('.card:not([hidden])') !== null;
+      group.hidden = !survives;
+      group.classList.toggle('hidden', !survives);
     }
     shown.textContent = visible;
     empty.hidden = visible > 0;
@@ -166,11 +232,16 @@ mod tests {
     use crate::svg;
 
     fn icon(name: &str, codepoint: char) -> Icon {
+        grouped(name, codepoint, None)
+    }
+
+    fn grouped(name: &str, codepoint: char, group: Option<&str>) -> Icon {
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <rect width="24" height="24" fill="#000"/>
                       </svg>"##;
         Icon {
             name: name.to_string(),
+            group: group.map(str::to_string),
             codepoint,
             outline: svg::parse(svg.as_bytes(), name).unwrap(),
         }
@@ -203,6 +274,45 @@ mod tests {
     fn search_index_covers_name_class_and_code() {
         let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", "icon", "f.css");
         assert!(page.contains(r#"data-search="arrow-left icon-arrow-left e900""#));
+    }
+
+    #[test]
+    fn subfolders_become_labelled_sections() {
+        let icons = vec![
+            icon("loose", '\u{e900}'),
+            grouped("left", '\u{e901}', Some("arrows")),
+            grouped("right", '\u{e902}', Some("arrows")),
+            grouped("share", '\u{e903}', Some("social")),
+        ];
+        let page = render(&icons, "Icons", "icon", "f.css");
+
+        // One section per group, plus the unlabelled one for top-level icons.
+        assert_eq!(page.matches("<section").count(), 3);
+        assert!(page.contains(r#"data-group="arrows""#));
+        assert!(page.contains(r#"data-group="social""#));
+        assert!(page.contains(">arrows</h2>"));
+        assert!(page.contains(">social</h2>"));
+        // Top-level icons sit in a section with no heading.
+        assert!(page.contains(r#"data-group=""#));
+        assert_eq!(page.matches("<h2").count(), 2);
+    }
+
+    #[test]
+    fn a_flat_folder_still_renders_one_unlabelled_section() {
+        let page = render(&[icon("only", '\u{e900}')], "Icons", "icon", "f.css");
+        assert_eq!(page.matches("<section").count(), 1);
+        assert!(!page.contains("<h2"));
+    }
+
+    #[test]
+    fn the_group_is_searchable() {
+        let page = render(
+            &[grouped("left", '\u{e900}', Some("arrows"))],
+            "Icons",
+            "icon",
+            "f.css",
+        );
+        assert!(page.contains(r#"data-search="left icon-left e900 arrows""#));
     }
 
     #[test]

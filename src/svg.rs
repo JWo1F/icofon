@@ -14,6 +14,7 @@ const CUBIC_TO_QUAD_ACCURACY: f64 = 0.2;
 
 /// One icon's artwork, already scaled and flipped into the font's coordinate
 /// system: y points up, the baseline is y = 0.
+#[derive(Debug)]
 pub struct Outline {
     pub path: BezPath,
     /// Horizontal advance for the glyph, in font units.

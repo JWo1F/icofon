@@ -37,9 +37,13 @@ const MAC_EPOCH_OFFSET: i64 = 2_082_844_800;
 /// Advance given to `.notdef`, which we emit as a blank glyph.
 const NOTDEF_ADVANCE: u16 = UNITS_PER_EM / 2;
 
+#[derive(Debug)]
 pub struct Icon {
     /// Name used for the CSS class, derived from the file name.
     pub name: String,
+    /// Subfolder the icon came from, used to group the preview page. Names
+    /// ignore it, so it has no effect on the font or the CSS classes.
+    pub group: Option<String>,
     pub codepoint: char,
     pub outline: Outline,
 }
@@ -280,6 +284,7 @@ mod tests {
     fn icon(name: &str, codepoint: char, svg: &str) -> Icon {
         Icon {
             name: name.to_string(),
+            group: None,
             codepoint,
             outline: crate::svg::parse(svg.as_bytes(), name).unwrap(),
         }
