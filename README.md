@@ -14,6 +14,12 @@ That reads every `.svg` in `./folder` and writes three files next to it:
 | `font.css` | `@font-face` plus one class per icon |
 | `example.html` | a searchable preview of every icon |
 
+and one file inside the icon folder itself:
+
+| File | What it is |
+| --- | --- |
+| `icofon.json` | records each icon's codepoint so it never moves — commit it |
+
 Drop the first two on a page and the icons are available as CSS classes:
 
 ```html
@@ -44,11 +50,47 @@ cargo install --path .
 The em box runs from 200 units below the baseline to 800 above it, which puts
 icons at the height that lines up with running text without extra CSS.
 
+## Adding icons later
+
+Codepoints are recorded in `icofon.json` inside the icon folder. On every build
+an icon keeps the codepoint it already had, and only icons icofon has never seen
+get a new one — so dropping `aardvark.svg` into a set does not shift everything
+after it and break pages already using the font.
+
+That makes `icofon.json` worth committing alongside the SVGs. Without it, the
+guarantee is gone: codepoints would be reassigned in file-name order on every
+build.
+
+A codepoint is never recycled. Delete an icon and its codepoint stays reserved,
+so a future icon cannot quietly inherit the meaning of the old one; the same
+holds for a codepoint an icon vacates by being pinned elsewhere.
+
+Use `--manifest <PATH>` to keep the file somewhere else, or `--no-manifest` to
+opt out of stable codepoints entirely.
+
+## Subfolders
+
+Subfolders group the preview page:
+
+```
+icons/
+  check.svg          ->  .icon-check          (no heading)
+  arrows/
+    left.svg         ->  .icon-left           under "arrows"
+    right.svg        ->  .icon-right          under "arrows"
+```
+
+Class names ignore the folder, so they stay short and moving an icon between
+folders does not rename it. The flip side is that two folders cannot hold the
+same file name — that is an error naming both files, not a silently dropped
+icon.
+
 ## The preview page
 
-`example.html` lists every icon in a grid, each card showing the glyph, its
-name, its CSS class and its codepoint. Search filters on all three — type a
-name, a class or a hex code — and clicking a class name copies it.
+`example.html` lists every icon in a grid, grouped by subfolder, each card
+showing the glyph, its name, its CSS class and its codepoint. Search filters on
+all of those — type a name, a class, a hex code or a folder — and groups that
+lose all their icons collapse with them. Clicking a class name copies it.
 
 It links the generated stylesheet, so it renders with exactly the CSS a site
 would use. Its own layout comes from the [Tailwind browser build][tw] loaded
@@ -70,16 +112,18 @@ The file name becomes the CSS class, lowercased and slugified:
 | `Arrow Left.svg` | `.icon-arrow-left` |
 | `zoom_in (2).svg` | `.icon-zoom_in-2` |
 
-Codepoints are assigned in file-name order starting at `U+E900`, in the Private
-Use Area. To pin one, prefix the file name with `u` (or `U+`) and the hex:
+New icons are assigned codepoints in file-name order starting at `U+E900`, in
+the Private Use Area; existing icons keep whatever they already had. To pin one
+explicitly, prefix the file name with `u` (or `U+`) and the hex:
 
 ```
 uE9F0-star.svg   ->  .icon-star   content: "\e9f0"
 ```
 
 Pinned codepoints are reserved before anything is auto-assigned, so they never
-collide. Two icons resolving to the same name, or to the same codepoint, is an
-error rather than a silently dropped glyph.
+collide. A pin moves the icon it names and the manifest follows; a pin that
+would take a codepoint already recorded for a *different* icon is an error, as
+are two icons resolving to the same name or the same codepoint.
 
 ## Options
 
@@ -89,6 +133,8 @@ icofon <INPUT> <OUTPUT> [OPTIONS]
   --css <PATH>          Stylesheet path (default: OUTPUT with a .css extension)
   --html <PATH>         Preview page path (default: example.html beside the stylesheet)
   --no-html             Skip the preview page
+  --manifest <PATH>     Codepoint manifest path (default: icofon.json in the icon folder)
+  --no-manifest         Do not read or write the manifest; codepoints then move as icons are added
   --font-family <NAME>  Family name in the font and the CSS (default: output file name)
   --prefix <PREFIX>     CSS class prefix (default: icon)
   --start <HEX>         First codepoint to assign (default: e900)
@@ -104,5 +150,5 @@ icofon examples/icons dist/icons.ttf --font-family "My Icons" --prefix ico
 ```
 
 ```
-6 icons -> dist/icons.ttf + dist/icons.css + dist/example.html
+6 icons -> dist/icons.ttf + dist/icons.css + dist/example.html + examples/icons/icofon.json
 ```
