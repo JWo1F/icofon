@@ -154,7 +154,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
             .join(" ")
         ),
         class = escape(&class),
-        name = escape(&icon.name),
+        name = escape(&icon.label),
         code = code,
     )
 }
@@ -235,15 +235,22 @@ mod tests {
         grouped(name, codepoint, None)
     }
 
-    fn grouped(name: &str, codepoint: char, group: Option<&str>) -> Icon {
+    /// Builds an icon the way `load_icons` does: the group is folded into the
+    /// name, and the label is the file part that is left.
+    fn grouped(label: &str, codepoint: char, group: Option<&str>) -> Icon {
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <rect width="24" height="24" fill="#000"/>
                       </svg>"##;
+        let name = match group {
+            Some(group) => format!("{}-{label}", group.replace('/', "-")),
+            None => label.to_string(),
+        };
         Icon {
-            name: name.to_string(),
+            name,
+            label: label.to_string(),
             group: group.map(str::to_string),
             codepoint,
-            outline: svg::parse(svg.as_bytes(), name).unwrap(),
+            outline: svg::parse(svg.as_bytes(), label).unwrap(),
         }
     }
 
@@ -274,6 +281,21 @@ mod tests {
     fn search_index_covers_name_class_and_code() {
         let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", "icon", "f.css");
         assert!(page.contains(r#"data-search="arrow-left icon-arrow-left e900""#));
+    }
+
+    #[test]
+    fn a_grouped_card_shows_the_leaf_name_and_the_full_class() {
+        // The heading already says "arrows", so repeating it in the title would
+        // just be noise; the class still carries the complete name.
+        let page = render(
+            &[grouped("left", '\u{e901}', Some("arrows"))],
+            "Icons",
+            "icon",
+            "f.css",
+        );
+        assert!(page.contains(">left</span>"), "card title is the leaf");
+        assert!(page.contains(">.icon-arrows-left</button>"));
+        assert!(page.contains(r#"data-copy="icon-arrows-left""#));
     }
 
     #[test]
@@ -312,7 +334,7 @@ mod tests {
             "icon",
             "f.css",
         );
-        assert!(page.contains(r#"data-search="left icon-left e900 arrows""#));
+        assert!(page.contains(r#"data-search="arrows-left icon-arrows-left e900 arrows""#));
     }
 
     #[test]

@@ -195,6 +195,9 @@ fn walk(dir: &Path, group: Option<&str>, out: &mut Vec<SvgFile>) -> Result<()> {
 
 /// Parse each SVG and pair it with a name and a codepoint.
 ///
+/// An icon's name is its file stem, prefixed with the subfolders it sits in, so
+/// `arrows/left.svg` is `arrows-left`.
+///
 /// Codepoints come from three places, in order of precedence: a `uE901-` prefix
 /// on the file name, the manifest's record of a previous build, and finally the
 /// next free codepoint at or after `first`. The manifest is what keeps an icon's
@@ -210,15 +213,21 @@ fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec
     for file in files {
         let stem = file_stem(&file.path)
             .with_context(|| format!("{} has no file name", file.path.display()))?;
-        let (codepoint, name) = split_codepoint(&stem);
-        let name = sanitize_name(&name);
+        let (codepoint, stem) = split_codepoint(&stem);
+        // The subfolder becomes part of the name, so icons/arrows/left.svg is
+        // `arrows-left`. Two folders can then each hold a `left.svg`.
+        let label = sanitize_name(&stem);
+        let name = match &file.group {
+            Some(group) => sanitize_name(&format!("{group}/{stem}")),
+            None => label.clone(),
+        };
         if name.is_empty() {
             bail!("{} has no usable icon name", file.path.display());
         }
         if let Some(first_seen) = names.insert(name.clone(), &file.path) {
             bail!(
                 "two icons would both be called '{name}':\n  {}\n  {}\n\
-                 Icon names ignore subfolders, so rename one of them.",
+                 Rename one of them.",
                 first_seen.display(),
                 file.path.display()
             );
@@ -229,7 +238,7 @@ fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec
             }
             pinned_by.insert(codepoint, name.clone());
         }
-        pending.push((file, name, codepoint));
+        pending.push((file, name, label, codepoint));
     }
 
     // Reserve everything the manifest has ever handed out, including to icons
@@ -250,7 +259,7 @@ fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec
 
     let mut next = first;
     let mut icons = Vec::with_capacity(pending.len());
-    for (file, name, pinned) in pending {
+    for (file, name, label, pinned) in pending {
         let codepoint = match pinned.or_else(|| manifest.get(&name)) {
             Some(codepoint) => codepoint,
             None => {
@@ -263,6 +272,7 @@ fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec
         };
         icons.push(Icon {
             name,
+            label,
             group: file.group.clone(),
             codepoint,
             outline: svg::load(&file.path)?,
@@ -434,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn subfolders_become_groups_without_touching_names() {
+    fn subfolders_prefix_the_name_and_group_the_page() {
         let dir = icon_folder(
             "groups",
             &["check.svg", "arrows/left.svg", "arrows/nested/up.svg"],
@@ -442,30 +452,47 @@ mod tests {
         let files = collect_svgs(&dir).unwrap();
         let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
 
-        let groups: Vec<_> = icons
+        let named: Vec<_> = icons
             .iter()
             .map(|i| (i.name.as_str(), i.group.as_deref()))
             .collect();
         assert_eq!(
-            groups,
+            named,
             [
-                // Top-level icons first, then subfolders in path order.
+                // Top-level icons keep a bare name and sort first; nested
+                // folders contribute every segment of their path.
                 ("check", None),
-                ("left", Some("arrows")),
-                ("up", Some("arrows/nested")),
+                ("arrows-left", Some("arrows")),
+                ("arrows-nested-up", Some("arrows/nested")),
             ]
         );
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn two_folders_cannot_hold_the_same_icon_name() {
-        let dir = icon_folder("collide", &["arrows/left.svg", "social/left.svg"]);
+    fn two_folders_may_hold_the_same_file_name() {
+        let dir = icon_folder("same-file", &["arrows/left.svg", "social/left.svg"]);
+        let files = collect_svgs(&dir).unwrap();
+        let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+
+        let names: Vec<_> = icons.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["arrows-left", "social-left"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_name_can_still_be_claimed_twice() {
+        // The prefix removes the common collision, not every possible one: a
+        // top-level arrows-left.svg still lands on arrows/left.svg.
+        let dir = icon_folder("collide", &["arrows-left.svg", "arrows/left.svg"]);
         let files = collect_svgs(&dir).unwrap();
         let error = load_icons(&files, '\u{e900}', &Manifest::default())
             .unwrap_err()
             .to_string();
-        assert!(error.contains("would both be called 'left'"), "{error}");
+        assert!(
+            error.contains("would both be called 'arrows-left'"),
+            "{error}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

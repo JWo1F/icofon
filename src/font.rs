@@ -39,10 +39,13 @@ const NOTDEF_ADVANCE: u16 = UNITS_PER_EM / 2;
 
 #[derive(Debug)]
 pub struct Icon {
-    /// Name used for the CSS class, derived from the file name.
+    /// Unique name used for the CSS class and the manifest, built from the
+    /// subfolders and the file name: `arrows/left.svg` is `arrows-left`.
     pub name: String,
-    /// Subfolder the icon came from, used to group the preview page. Names
-    /// ignore it, so it has no effect on the font or the CSS classes.
+    /// Just the file part of the name. The preview page shows this under the
+    /// group heading, so a card is not made of the folder repeated three times.
+    pub label: String,
+    /// Subfolder the icon came from, used to group the preview page.
     pub group: Option<String>,
     pub codepoint: char,
     pub outline: Outline,
@@ -284,6 +287,7 @@ mod tests {
     fn icon(name: &str, codepoint: char, svg: &str) -> Icon {
         Icon {
             name: name.to_string(),
+            label: name.to_string(),
             group: None,
             codepoint,
             outline: crate::svg::parse(svg.as_bytes(), name).unwrap(),
