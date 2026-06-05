@@ -70,20 +70,28 @@ opt out of stable codepoints entirely.
 
 ## Subfolders
 
-Subfolders group the preview page:
+A subfolder prefixes the names of the icons inside it, and groups them in the
+preview page:
 
 ```
 icons/
-  check.svg          ->  .icon-check          (no heading)
+  check.svg            ->  .icon-check              (no heading)
   arrows/
-    left.svg         ->  .icon-left           under "arrows"
-    right.svg        ->  .icon-right          under "arrows"
+    left.svg           ->  .icon-arrows-left        under "arrows"
+    right.svg          ->  .icon-arrows-right       under "arrows"
+  social/
+    left.svg           ->  .icon-social-left        under "social"
 ```
 
-Class names ignore the folder, so they stay short and moving an icon between
-folders does not rename it. The flip side is that two folders cannot hold the
-same file name — that is an error naming both files, not a silently dropped
-icon.
+So two folders can each hold a `left.svg` without clashing. Nesting keeps
+going — `arrows/filled/up.svg` is `.icon-arrows-filled-up`.
+
+The preview page shows only the file part of the name on each card, since the
+heading above it already names the folder; the class underneath carries the
+full name.
+
+Moving an icon between folders renames it, and therefore gives it a new
+codepoint — the old one is retired, not reused.
 
 ## The preview page
 
@@ -104,13 +112,15 @@ Use `--html <PATH>` to put it somewhere else, or `--no-html` to skip it.
 
 ## Names and codepoints
 
-The file name becomes the CSS class, lowercased and slugified:
+The file name becomes the CSS class, lowercased and slugified, prefixed with
+any subfolders it sits in:
 
 | File | Class |
 | --- | --- |
 | `arrow-left.svg` | `.icon-arrow-left` |
 | `Arrow Left.svg` | `.icon-arrow-left` |
 | `zoom_in (2).svg` | `.icon-zoom_in-2` |
+| `arrows/left.svg` | `.icon-arrows-left` |
 
 New icons are assigned codepoints in file-name order starting at `U+E900`, in
 the Private Use Area; existing icons keep whatever they already had. To pin one

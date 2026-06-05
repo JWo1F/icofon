@@ -1,10 +1,10 @@
 {
   "codepoints": {
-    "blocks": "e902",
+    "bars-wide-bar": "e901",
     "check": "e900",
-    "evenodd-donut": "e903",
-    "ring": "e904",
-    "star-filled": "e9f0",
-    "wide-bar": "e901"
+    "shapes-blocks": "e902",
+    "shapes-evenodd-donut": "e903",
+    "shapes-ring": "e904",
+    "star-filled": "e9f0"
   }
 }
