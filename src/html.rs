@@ -24,6 +24,13 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
 <title>{family} — icons</title>
 <link rel="stylesheet" href="{css}">
 <script src="{tailwind}"></script>
+<style>
+  /* An icon is one em tall but may be many ems wide, so each card is measured
+     and the glyph is scaled down by its own width to fit. Square icons are
+     unaffected: their --aspect is 1. */
+  .card {{ container-type: inline-size; }}
+  .glyph {{ font-size: min(2.25rem, calc((100cqw - 1.5rem) / var(--aspect, 1))); }}
+</style>
 </head>
 <body class="bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
 <div class="mx-auto max-w-6xl px-4 py-8 sm:px-8">
@@ -123,13 +130,25 @@ fn section_open(group: Option<&str>) -> String {
 fn card(icon: &Icon, prefix: &str) -> String {
     let class = format!("{prefix}-{}", icon.name);
     let code = icon.codepoint as u32;
+    // How many ems wide the glyph is. A wide icon would otherwise run straight
+    // out of its card, so the stylesheet divides the display size by this.
+    let aspect = f64::from(icon.outline.advance) / f64::from(crate::font::UNITS_PER_EM);
+    let width_note = if aspect >= 1.5 {
+        format!(
+            r#"
+        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{aspect:.1}× wide</code>"#
+        )
+    } else {
+        String::new()
+    };
+
     format!(
-        r#"    <figure data-search="{search}"
+        r#"    <figure data-search="{search}" style="--aspect:{aspect:.3}"
             class="card m-0 flex flex-col items-center gap-3 rounded-xl border border-zinc-200
                    px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
-      <span class="{class} text-4xl leading-none" aria-hidden="true"></span>
+      <span class="glyph {class} leading-none" aria-hidden="true"></span>
       <figcaption class="flex w-full flex-col items-center gap-1">
-        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>
+        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>{width_note}
         <button type="button" data-copy="{class}" title="Copy class name"
                 class="name max-w-full cursor-pointer rounded-md px-1.5 py-0.5 font-mono text-[12px]
                        break-all text-zinc-500 hover:bg-blue-600/10 hover:text-blue-700
@@ -156,6 +175,8 @@ fn card(icon: &Icon, prefix: &str) -> String {
         class = escape(&class),
         name = escape(&icon.label),
         code = code,
+        aspect = aspect,
+        width_note = width_note,
     )
 }
 
@@ -249,6 +270,7 @@ mod tests {
             name,
             label: label.to_string(),
             group: group.map(str::to_string),
+            source: label.into(),
             codepoint,
             outline: svg::parse(svg.as_bytes(), label).unwrap(),
         }
@@ -261,14 +283,36 @@ mod tests {
 
         assert!(page.contains(r#"<link rel="stylesheet" href="icons.css">"#));
         // Each card carries the glyph, the bare name, the class and the codepoint.
-        assert!(page.contains(r#"<span class="ico-arrow-left "#));
+        assert!(page.contains(r#"<span class="glyph ico-arrow-left "#));
         assert!(page.contains(">arrow-left</span>"));
         assert!(page.contains(r#"data-copy="ico-arrow-left""#));
         assert!(page.contains(">.ico-arrow-left</button>"));
         assert!(page.contains("U+E900"));
-        assert!(page.contains(r#"<span class="ico-star "#));
+        assert!(page.contains(r#"<span class="glyph ico-star "#));
         assert!(page.contains("U+E9F0"));
         assert_eq!(page.matches("data-search=").count(), icons.len());
+    }
+
+    #[test]
+    fn wide_icons_carry_their_aspect_so_the_card_can_shrink_them() {
+        let mut wide = icon("wordmark", '\u{e900}');
+        wide.outline.advance = 16_538;
+        let page = render(&[wide], "Icons", "icon", "f.css");
+        assert!(
+            page.contains("--aspect:16.538"),
+            "the card is told how wide it is"
+        );
+        assert!(
+            page.contains("16.5× wide"),
+            "and says so, since it renders small"
+        );
+    }
+
+    #[test]
+    fn ordinary_icons_get_no_width_note() {
+        let page = render(&[icon("square", '\u{e900}')], "Icons", "icon", "f.css");
+        assert!(page.contains("--aspect:1.000"));
+        assert!(!page.contains("× wide"));
     }
 
     #[test]

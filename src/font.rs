@@ -47,6 +47,8 @@ pub struct Icon {
     pub label: String,
     /// Subfolder the icon came from, used to group the preview page.
     pub group: Option<String>,
+    /// Where the icon was read from, so problems can name the actual file.
+    pub source: std::path::PathBuf,
     pub codepoint: char,
     pub outline: Outline,
 }
@@ -289,6 +291,7 @@ mod tests {
             name: name.to_string(),
             label: name.to_string(),
             group: None,
+            source: name.into(),
             codepoint,
             outline: crate::svg::parse(svg.as_bytes(), name).unwrap(),
         }

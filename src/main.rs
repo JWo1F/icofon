@@ -50,6 +50,11 @@ struct Args {
     #[arg(long, conflicts_with = "manifest")]
     no_manifest: bool,
 
+    /// Leave out icons that cannot be turned into a glyph instead of failing.
+    /// What was left out is reported on stderr.
+    #[arg(long)]
+    skip_errors: bool,
+
     /// Font family name used in the font and in the CSS (defaults to the font file name).
     #[arg(long, value_name = "NAME")]
     font_family: Option<String>,
@@ -101,6 +106,7 @@ fn main() -> Result<()> {
     };
 
     let icons = load_icons(&files, args.start, &manifest)?;
+    let icons = triage(icons, args.skip_errors)?;
 
     let font = font::build(&icons, &family)?;
     write(&args.output, &font)?;
@@ -274,11 +280,62 @@ fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec
             name,
             label,
             group: file.group.clone(),
+            source: file.path.clone(),
             codepoint,
             outline: svg::load(&file.path)?,
         });
     }
     Ok(icons)
+}
+
+/// Separate the icons that became real glyphs from the ones that could not.
+///
+/// A blank or blacked-out glyph is worse than a build failure: it looks like a
+/// working icon until someone puts it on a page. Every bad file is reported at
+/// once, so a large set is fixed in one pass rather than one file per run.
+fn triage(icons: Vec<Icon>, skip_errors: bool) -> Result<Vec<Icon>> {
+    let (broken, good): (Vec<_>, Vec<_>) = icons
+        .into_iter()
+        .partition(|icon| icon.outline.problem.is_some());
+
+    if broken.is_empty() {
+        return Ok(good);
+    }
+
+    if !skip_errors {
+        bail!(
+            "{} of {} icons cannot be turned into a glyph:\n{}\n\
+             Fix them, or pass --skip-errors to leave them out.",
+            broken.len(),
+            broken.len() + good.len(),
+            problem_list(&broken)
+        );
+    }
+
+    eprintln!(
+        "skipped {} of {} icons:\n{}",
+        broken.len(),
+        broken.len() + good.len(),
+        problem_list(&broken)
+    );
+    if good.is_empty() {
+        bail!("every icon was skipped, so there is nothing to build");
+    }
+    Ok(good)
+}
+
+fn problem_list(broken: &[Icon]) -> String {
+    let mut list = String::new();
+    for icon in broken {
+        let problem = icon.outline.problem.expect("partitioned on being Some");
+        list.push_str(&format!(
+            "  {} ({})\n      {}\n",
+            icon.name,
+            icon.source.display(),
+            problem.explain()
+        ));
+    }
+    list
 }
 
 /// The first codepoint at or after `from` that no icon has claimed.
@@ -322,7 +379,7 @@ fn sanitize_name(stem: &str) -> String {
     let mut name = String::with_capacity(stem.len());
     for ch in stem.chars() {
         match ch {
-            'a'..='z' | '0'..='9' | '-' | '_' => name.push(ch),
+            'a'..='z' | '0'..='9' | '-' => name.push(ch),
             'A'..='Z' => name.push(ch.to_ascii_lowercase()),
             _ => name.push('-'),
         }
@@ -602,7 +659,12 @@ mod tests {
         assert_eq!(sanitize_name("Arrow Left"), "arrow-left");
         assert_eq!(sanitize_name("chevron--right"), "chevron-right");
         assert_eq!(sanitize_name("--trash--"), "trash");
-        assert_eq!(sanitize_name("zoom_in (2)"), "zoom_in-2");
+        // Underscores are separators too, so names are consistently hyphenated.
+        assert_eq!(sanitize_name("zoom_in (2)"), "zoom-in-2");
+        assert_eq!(
+            sanitize_name("empty_states/no_results"),
+            "empty-states-no-results"
+        );
     }
 
     #[test]
