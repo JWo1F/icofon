@@ -19,6 +19,33 @@ pub struct Outline {
     pub path: BezPath,
     /// Horizontal advance for the glyph, in font units.
     pub advance: u16,
+    /// Set when the SVG cannot be faithfully turned into a glyph, so the caller
+    /// can report it instead of shipping a blank or blacked-out icon.
+    pub problem: Option<Problem>,
+}
+
+/// A reason an SVG cannot become a glyph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Problem {
+    /// The artwork is a bitmap wrapped in an SVG — typically a PNG pasted out
+    /// of a design tool. A glyph is an outline, so there is nothing to trace.
+    RasterImage,
+    /// Nothing drawable came out of the file.
+    Empty,
+}
+
+impl Problem {
+    pub fn explain(self) -> &'static str {
+        match self {
+            Problem::RasterImage => {
+                "the artwork is a bitmap embedded in the SVG, and a glyph can only be an outline; \
+                 re-export it as vector paths"
+            }
+            Problem::Empty => {
+                "nothing drawable in the file; it may use an SVG feature a font cannot represent"
+            }
+        }
+    }
 }
 
 /// Parse `file` and flatten everything drawable in it into a single outline.
@@ -32,9 +59,41 @@ pub fn load(file: &Path) -> Result<Outline> {
     parse(&data, &file.display().to_string())
 }
 
+/// Rewrite `currentcolor` to the spelling usvg accepts.
+///
+/// SVG and CSS keywords are case-insensitive, so `currentcolor` is valid and
+/// design tools do emit it, but usvg only matches `currentColor` and silently
+/// drops the paint — which turns a stroke-drawn icon into an empty glyph.
+fn normalize_current_color(data: &[u8]) -> Vec<u8> {
+    const KEYWORD: &[u8] = b"currentcolor";
+    const CANONICAL: &[u8] = b"currentColor";
+
+    let lower: Vec<u8> = data.to_ascii_lowercase();
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        if lower[i..].starts_with(KEYWORD) {
+            let end = i + KEYWORD.len();
+            // Only a standalone keyword, never part of a longer identifier.
+            let boundary = |b: u8| !b.is_ascii_alphanumeric() && b != b'-' && b != b'_';
+            let before_ok = i == 0 || boundary(data[i - 1]);
+            let after_ok = end >= data.len() || boundary(data[end]);
+            if before_ok && after_ok {
+                out.extend_from_slice(CANONICAL);
+                i = end;
+                continue;
+            }
+        }
+        out.push(data[i]);
+        i += 1;
+    }
+    out
+}
+
 /// The body of [`load`], split out so it can be exercised without touching disk.
 pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
-    let tree = usvg::Tree::from_data(data, &usvg::Options::default())
+    let data = normalize_current_color(data);
+    let tree = usvg::Tree::from_data(&data, &usvg::Options::default())
         .with_context(|| format!("parsing {source}"))?;
 
     let size = tree.size();
@@ -43,7 +102,8 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
     }
 
     let mut drawn = Vec::new();
-    collect(tree.root(), &mut drawn);
+    let mut raster = false;
+    collect(tree.root(), &mut drawn, &mut raster);
 
     let scale = f64::from(UNITS_PER_EM) / f64::from(size.height());
     let mut path = BezPath::new();
@@ -56,9 +116,19 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
         path.extend(piece);
     }
 
+    let path = cubics_to_quads(&path);
+    let problem = if raster {
+        Some(Problem::RasterImage)
+    } else if path.is_empty() {
+        Some(Problem::Empty)
+    } else {
+        None
+    };
+
     Ok(Outline {
-        path: cubics_to_quads(&path),
+        path,
         advance: (f64::from(size.width()) * scale).round().max(0.0) as u16,
+        problem,
     })
 }
 
@@ -73,22 +143,27 @@ struct Filled {
 /// Fills contribute their own outline; strokes are converted to an outline of
 /// their own so that stroke-drawn icon sets (Feather and friends) survive the
 /// trip into a font, which only knows how to fill.
-fn collect(group: &usvg::Group, out: &mut Vec<Filled>) {
+fn collect(group: &usvg::Group, out: &mut Vec<Filled>, raster: &mut bool) {
     for node in group.children() {
         match node {
-            usvg::Node::Group(child) => collect(child, out),
+            usvg::Node::Group(child) => collect(child, out, raster),
             usvg::Node::Path(path) => {
                 if !path.is_visible() {
                     continue;
                 }
                 let transform = path.abs_transform();
-                if let Some(fill) = path.fill()
-                    && let Some(p) = path.data().clone().transform(transform)
-                {
-                    out.push(Filled {
-                        path: p,
-                        even_odd: fill.rule() == usvg::FillRule::EvenOdd,
-                    });
+                if let Some(fill) = path.fill() {
+                    // A pattern fill means the shape is a window onto other
+                    // content — in practice a pasted bitmap. Tracing its outline
+                    // would emit a solid box where the picture should be.
+                    if matches!(fill.paint(), usvg::Paint::Pattern(_)) {
+                        *raster = true;
+                    } else if let Some(p) = path.data().clone().transform(transform) {
+                        out.push(Filled {
+                            path: p,
+                            even_odd: fill.rule() == usvg::FillRule::EvenOdd,
+                        });
+                    }
                 }
                 if let Some(stroke) = path.stroke()
                     && let Some(p) =
@@ -101,8 +176,8 @@ fn collect(group: &usvg::Group, out: &mut Vec<Filled>) {
                     });
                 }
             }
-            // Rasters and (with text support compiled out) text have no outline
-            // to contribute.
+            usvg::Node::Image(_) => *raster = true,
+            // With text support compiled out, text has no outline to contribute.
             _ => {}
         }
     }
