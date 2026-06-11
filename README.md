@@ -43,12 +43,41 @@ cargo install --path .
 - **`fill-rule="evenodd"` is honoured.** Fonts only do non-zero winding, so
   even-odd contours are re-oriented by nesting depth; holes stay holes instead
   of filling in.
+- **`currentcolor` is accepted in any case.** SVG keywords are case-insensitive
+  and design tools emit the lowercase spelling, but the underlying parser only
+  matches `currentColor` and would otherwise drop the paint — turning a
+  stroke-drawn icon into a blank glyph.
 - **The viewBox height maps onto one em.** An icon drawn edge to edge in its
   viewBox renders exactly `1em` tall. Width is scaled to match and becomes the
   glyph's advance, so non-square icons keep their proportions.
 
 The em box runs from 200 units below the baseline to 800 above it, which puts
 icons at the height that lines up with running text without extra CSS.
+
+## Icons that cannot become glyphs
+
+A glyph is an outline, so some SVGs have nothing to trace. The build fails and
+names every one of them at once, rather than shipping an icon that looks fine in
+the folder and renders blank or as a black box on the page:
+
+```
+Error: 4 of 410 icons cannot be turned into a glyph:
+  atol (icons/atol.svg)
+      the artwork is a bitmap embedded in the SVG, and a glyph can only be an
+      outline; re-export it as vector paths
+  ...
+Fix them, or pass --skip-errors to leave them out.
+```
+
+The two cases caught are a **bitmap wrapped in an SVG** — a PNG pasted out of a
+design tool, which would otherwise come through as a solid rectangle — and a
+file that yields **nothing drawable at all**.
+
+`--skip-errors` builds the font without them and lists what it left out on
+stderr.
+
+What is *not* caught, because the shape still converts: gradients and partial
+opacity flatten to solid fills, since a glyph is monochrome.
 
 ## Adding icons later
 
@@ -100,6 +129,11 @@ showing the glyph, its name, its CSS class and its codepoint. Search filters on
 all of those — type a name, a class, a hex code or a folder — and groups that
 lose all their icons collapse with them. Clicking a class name copies it.
 
+Icons are one em tall but may be many ems wide. Each card is told its icon's
+aspect ratio and scales the glyph down to fit, so a wordmark 16 times wider than
+it is tall sits inside its card instead of running off the page; anything wider
+than 1.5× is labelled with its width, which explains why it renders small.
+
 It links the generated stylesheet, so it renders with exactly the CSS a site
 would use. Its own layout comes from the [Tailwind browser build][tw] loaded
 from a CDN, which compiles utility classes at page load; that keeps the page
@@ -119,7 +153,7 @@ any subfolders it sits in:
 | --- | --- |
 | `arrow-left.svg` | `.icon-arrow-left` |
 | `Arrow Left.svg` | `.icon-arrow-left` |
-| `zoom_in (2).svg` | `.icon-zoom_in-2` |
+| `zoom_in (2).svg` | `.icon-zoom-in-2` |
 | `arrows/left.svg` | `.icon-arrows-left` |
 
 New icons are assigned codepoints in file-name order starting at `U+E900`, in
@@ -145,6 +179,8 @@ icofon <INPUT> <OUTPUT> [OPTIONS]
   --no-html             Skip the preview page
   --manifest <PATH>     Codepoint manifest path (default: icofon.json in the icon folder)
   --no-manifest         Do not read or write the manifest; codepoints then move as icons are added
+  --skip-errors         Leave out icons that cannot become a glyph, listing them on stderr,
+                        instead of failing the build
   --font-family <NAME>  Family name in the font and the CSS (default: output file name)
   --prefix <PREFIX>     CSS class prefix (default: icon)
   --start <HEX>         First codepoint to assign (default: e900)
