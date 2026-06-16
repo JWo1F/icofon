@@ -167,7 +167,30 @@ uE9F0-star.svg   ->  .icon-star   content: "\e9f0"
 Pinned codepoints are reserved before anything is auto-assigned, so they never
 collide. A pin moves the icon it names and the manifest follows; a pin that
 would take a codepoint already recorded for a *different* icon is an error, as
-are two icons resolving to the same name or the same codepoint.
+are two icons pinning the same codepoint.
+
+## Duplicate names
+
+Different file names can still slugify to the same thing — `map-pin.svg` and
+`map_pin.svg` both give `map-pin`. Rather than failing, the first in sorted
+order keeps the plain name and the rest are numbered, and each one is reported:
+
+```
+'map-pin' is already taken by icons/map-pin.svg, so icons/map_pin.svg is called 'map-pin-2'
+```
+
+```
+icons/map-pin.svg   ->  .icon-map-pin
+icons/map_pin.svg   ->  .icon-map-pin-2
+```
+
+Numbering starts at 2 and steps over names a real file already has, so an
+existing `map-pin-2.svg` keeps its own name.
+
+Treat the message as something to fix rather than a normal state. The numbering
+depends on sort order, so adding a *third* colliding file that sorts before the
+others renumbers the ones after it — which changes their names, and therefore
+their codepoints. Renaming one of the originals is the durable fix.
 
 ## Options
 
