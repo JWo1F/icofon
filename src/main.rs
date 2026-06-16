@@ -230,14 +230,22 @@ fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec
         if name.is_empty() {
             bail!("{} has no usable icon name", file.path.display());
         }
-        if let Some(first_seen) = names.insert(name.clone(), &file.path) {
-            bail!(
-                "two icons would both be called '{name}':\n  {}\n  {}\n\
-                 Rename one of them.",
-                first_seen.display(),
-                file.path.display()
-            );
-        }
+
+        // Two files can still want the same name — `map-pin.svg` and
+        // `map_pin.svg` both reduce to `map-pin`. Files are walked in sorted
+        // order, so the first keeps the plain name and later ones are numbered.
+        let (name, label) = match next_free_name(&name, &names) {
+            (name, None) => (name, label),
+            (numbered, Some(suffix)) => {
+                eprintln!(
+                    "'{name}' is already taken by {}, so {} is called '{numbered}'",
+                    names[&name].display(),
+                    file.path.display(),
+                );
+                (numbered, format!("{label}-{suffix}"))
+            }
+        };
+        names.insert(name.clone(), &file.path);
         if let Some(codepoint) = codepoint {
             if !taken.insert(codepoint) {
                 bail!("codepoint U+{:04X} is claimed twice", codepoint as u32);
@@ -336,6 +344,22 @@ fn problem_list(broken: &[Icon]) -> String {
         ));
     }
     list
+}
+
+/// Find a free name for `base`, numbering it `-2`, `-3`, … if it is taken.
+///
+/// Returns the suffix as well so the preview label can be numbered to match,
+/// otherwise two cards would read identically.
+fn next_free_name(base: &str, taken: &BTreeMap<String, &Path>) -> (String, Option<u32>) {
+    if !taken.contains_key(base) {
+        return (base.to_string(), None);
+    }
+    // Starts at 2 so the pair reads as `map-pin` and `map-pin-2`. Skips any
+    // number a real file already claimed, so `map-pin-2.svg` keeps its name.
+    (2..)
+        .map(|suffix| (format!("{base}-{suffix}"), Some(suffix)))
+        .find(|(candidate, _)| !taken.contains_key(candidate))
+        .expect("the range is unbounded, so some candidate is free")
 }
 
 /// The first codepoint at or after `from` that no icon has claimed.
@@ -538,18 +562,60 @@ mod tests {
     }
 
     #[test]
-    fn a_name_can_still_be_claimed_twice() {
-        // The prefix removes the common collision, not every possible one: a
-        // top-level arrows-left.svg still lands on arrows/left.svg.
-        let dir = icon_folder("collide", &["arrows-left.svg", "arrows/left.svg"]);
+    fn colliding_names_are_numbered_in_sorted_order() {
+        // Both reduce to map-pin; the first in sorted order keeps the plain
+        // name. '-' sorts before '_', so map-pin.svg wins.
+        let dir = icon_folder("collide", &["map-pin.svg", "map_pin.svg", "map pin.svg"]);
         let files = collect_svgs(&dir).unwrap();
-        let error = load_icons(&files, '\u{e900}', &Manifest::default())
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("would both be called 'arrows-left'"),
-            "{error}"
+        let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+
+        let names: Vec<_> = icons.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["map-pin", "map-pin-2", "map-pin-3"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn numbering_skips_a_name_a_real_file_already_has() {
+        // map-pin-2.svg is a genuine icon, so the numbered fallback must step
+        // over it rather than fight it for the name.
+        let dir = icon_folder(
+            "collide-skip",
+            &["map-pin.svg", "map-pin-2.svg", "map_pin.svg"],
         );
+        let files = collect_svgs(&dir).unwrap();
+        let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+
+        let named: Vec<_> = icons
+            .iter()
+            .map(|i| {
+                (
+                    i.source.file_name().unwrap().to_str().unwrap(),
+                    i.name.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("map-pin-2.svg", "map-pin-2"),
+                ("map-pin.svg", "map-pin"),
+                ("map_pin.svg", "map-pin-3"),
+            ]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_numbered_icon_gets_a_numbered_label_too() {
+        // The preview shows the label, so both cards must not read the same.
+        // (`pin_` slugifies to `pin`, and unlike a case variant it survives a
+        // case-insensitive filesystem.)
+        let dir = icon_folder("collide-label", &["group/pin.svg", "group/pin_.svg"]);
+        let files = collect_svgs(&dir).unwrap();
+        let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+
+        let labels: Vec<_> = icons.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["pin", "pin-2"]);
         std::fs::remove_dir_all(&dir).ok();
     }
 
