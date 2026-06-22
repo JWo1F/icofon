@@ -30,6 +30,10 @@ pub enum Problem {
     /// The artwork is a bitmap wrapped in an SVG — typically a PNG pasted out
     /// of a design tool. A glyph is an outline, so there is nothing to trace.
     RasterImage,
+    /// The artwork is shaped by a mask, which decides per-pixel how much of
+    /// each shape survives. An outline has no such control, so ignoring the
+    /// mask would draw shapes the design never showed.
+    Masked,
     /// Nothing drawable came out of the file.
     Empty,
 }
@@ -40,6 +44,10 @@ impl Problem {
             Problem::RasterImage => {
                 "the artwork is a bitmap embedded in the SVG, and a glyph can only be an outline; \
                  re-export it as vector paths"
+            }
+            Problem::Masked => {
+                "the design relies on a <mask>, which cannot be expressed as an outline; \
+                 flatten the mask in your design tool and re-export"
             }
             Problem::Empty => {
                 "nothing drawable in the file; it may use an SVG feature a font cannot represent"
@@ -102,8 +110,8 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
     }
 
     let mut drawn = Vec::new();
-    let mut raster = false;
-    collect(tree.root(), &mut drawn, &mut raster);
+    let mut found = Findings::default();
+    collect(tree.root(), &mut drawn, &mut found);
 
     let scale = f64::from(UNITS_PER_EM) / f64::from(size.height());
     let mut path = BezPath::new();
@@ -113,12 +121,22 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
         if filled.even_odd {
             piece = to_nonzero_winding(&piece);
         }
+        if filled.background {
+            // Shapes are visited in paint order, so what a white shape means is
+            // decided by what is already under it.
+            if let Some(hole) = knocked_out_of(&piece, &path) {
+                path.extend(hole);
+            }
+            continue;
+        }
         path.extend(piece);
     }
 
     let path = cubics_to_quads(&path);
-    let problem = if raster {
+    let problem = if found.raster {
         Some(Problem::RasterImage)
+    } else if found.masked {
+        Some(Problem::Masked)
     } else if path.is_empty() {
         Some(Problem::Empty)
     } else {
@@ -132,10 +150,12 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
     })
 }
 
-/// One filled shape pulled out of the SVG, with the fill rule it was drawn under.
+/// One filled shape pulled out of the SVG, in paint order.
 struct Filled {
     path: tiny_skia_path::Path,
     even_odd: bool,
+    /// White shapes are not ink; what they mean depends on what is under them.
+    background: bool,
 }
 
 /// Walk the usvg tree and collect every visible path, in absolute coordinates.
@@ -143,10 +163,21 @@ struct Filled {
 /// Fills contribute their own outline; strokes are converted to an outline of
 /// their own so that stroke-drawn icon sets (Feather and friends) survive the
 /// trip into a font, which only knows how to fill.
-fn collect(group: &usvg::Group, out: &mut Vec<Filled>, raster: &mut bool) {
+/// What the walk noticed that stops the artwork becoming a faithful glyph.
+#[derive(Default)]
+struct Findings {
+    raster: bool,
+    masked: bool,
+}
+
+fn collect(group: &usvg::Group, out: &mut Vec<Filled>, found: &mut Findings) {
+    if group.mask().is_some() {
+        found.masked = true;
+    }
+
     for node in group.children() {
         match node {
-            usvg::Node::Group(child) => collect(child, out, raster),
+            usvg::Node::Group(child) => collect(child, out, found),
             usvg::Node::Path(path) => {
                 if !path.is_visible() {
                     continue;
@@ -157,11 +188,12 @@ fn collect(group: &usvg::Group, out: &mut Vec<Filled>, raster: &mut bool) {
                     // content — in practice a pasted bitmap. Tracing its outline
                     // would emit a solid box where the picture should be.
                     if matches!(fill.paint(), usvg::Paint::Pattern(_)) {
-                        *raster = true;
+                        found.raster = true;
                     } else if let Some(p) = path.data().clone().transform(transform) {
                         out.push(Filled {
                             path: p,
                             even_odd: fill.rule() == usvg::FillRule::EvenOdd,
+                            background: is_background(fill.paint()),
                         });
                     }
                 }
@@ -173,13 +205,71 @@ fn collect(group: &usvg::Group, out: &mut Vec<Filled>, raster: &mut bool) {
                     out.push(Filled {
                         path: p,
                         even_odd: false,
+                        background: is_background(stroke.paint()),
                     });
                 }
             }
-            usvg::Node::Image(_) => *raster = true,
+            usvg::Node::Image(_) => found.raster = true,
             // With text support compiled out, text has no outline to contribute.
             _ => {}
         }
+    }
+}
+
+/// Turn a white shape into a hole in `ink`, if that is what it was doing.
+///
+/// A white shape means one of two things, and only what lies beneath it tells
+/// them apart. Over existing ink it is a knock-out — the tick cut out of a
+/// filled circle, the wordmark cut out of a brand panel — and becomes a hole.
+/// Over nothing it is background, like the white panel a badge is built on, and
+/// is dropped: painting it would bury the design under a solid block.
+///
+/// Returns the contour to append, wound against the ink beneath so that
+/// non-zero filling cancels it out.
+fn knocked_out_of(white: &BezPath, ink: &BezPath) -> Option<BezPath> {
+    let (over, under) = (white.bounding_box(), ink.bounding_box());
+    // Require containment. A shape only partly over the ink would leave a
+    // reversed contour sitting in open space, which non-zero filling paints in
+    // rather than removes.
+    if under.width() <= 0.0 || !under.contains_rect(over) {
+        return None;
+    }
+
+    let winding = ink.winding(over.center());
+    if winding == 0 {
+        return None;
+    }
+
+    // Cancel the ink: the hole must wind opposite to what is under it.
+    let wanted = -winding.signum();
+    let current = if white.area() > 0.0 { 1 } else { -1 };
+    Some(if current == wanted {
+        white.clone()
+    } else {
+        white.reverse_subpaths()
+    })
+}
+
+/// Whether a paint is white enough to mean "background" rather than ink.
+///
+/// A glyph has no colour, only ink and its absence, so a white shape cannot be
+/// drawn — painting it would put ink exactly where the artwork wanted none. The
+/// clearest case is a badge built as a white panel with a dark outline and dark
+/// lettering on top: filling the panel buries the whole design under a solid
+/// block. Treating white as nothing keeps the parts that carry the shape.
+///
+/// Order is deliberately ignored. A white shape painted *over* darker artwork is
+/// a knock-out and would ideally be subtracted, but every shape ends up in one
+/// non-zero path where drawing order is gone, so subtracting would also eat
+/// artwork that merely sits behind it. Dropping is never worse than the solid
+/// blob that painting produces, and often much better.
+fn is_background(paint: &usvg::Paint) -> bool {
+    const NEAR_WHITE: u8 = 0xF0;
+    match paint {
+        usvg::Paint::Color(color) => {
+            color.red >= NEAR_WHITE && color.green >= NEAR_WHITE && color.blue >= NEAR_WHITE
+        }
+        _ => false,
     }
 }
 
@@ -434,6 +524,80 @@ mod tests {
         );
         assert!(!o.path.contains(Point::new(500.0, 300.0)));
         assert!(o.path.contains(Point::new(500.0, 630.0)));
+    }
+
+    #[test]
+    fn a_white_panel_is_background_not_ink() {
+        // A badge built as a white panel with a dark outline: painting the
+        // panel would bury the design under a solid block.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect x="2" y="2" width="20" height="20" fill="white"
+                        stroke="#000" stroke-width="2"/>
+                </svg>"##,
+        );
+        assert!(!o.path.is_empty(), "the dark outline still draws");
+        assert!(
+            !o.path.contains(Point::new(500.0, 300.0)),
+            "the middle of the panel must stay empty"
+        );
+        assert_eq!(o.problem, None);
+    }
+
+    #[test]
+    fn white_over_ink_is_knocked_out() {
+        // A tick cut out of a filled circle: the white shape is a hole, not a
+        // block of ink, so the middle must be empty and the ring solid.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" fill="#000"/>
+                  <circle cx="12" cy="12" r="5" fill="white"/>
+                </svg>"##,
+        );
+        assert!(
+            !o.path.contains(Point::new(500.0, 300.0)),
+            "the knocked-out middle must be empty"
+        );
+        assert!(
+            o.path.contains(Point::new(500.0, 612.0)),
+            "the ring around it must still be ink"
+        );
+    }
+
+    #[test]
+    fn a_white_shape_over_nothing_is_simply_dropped() {
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect width="24" height="24" fill="white"/>
+                </svg>"##,
+        );
+        assert_eq!(o.problem, Some(Problem::Empty));
+    }
+
+    #[test]
+    fn masked_artwork_is_reported_rather_than_over_drawn() {
+        // Ignoring the mask would paint the whole square instead of the
+        // quarter the design actually shows.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <mask id="m" style="mask-type:luminance">
+                    <rect width="12" height="12" fill="white"/>
+                  </mask>
+                  <g mask="url(#m)"><rect width="24" height="24" fill="#000"/></g>
+                </svg>"##,
+        );
+        assert_eq!(o.problem, Some(Problem::Masked));
+    }
+
+    #[test]
+    fn a_bitmap_wrapped_in_an_svg_is_reported() {
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <image width="24" height="24"
+                         href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="/>
+                </svg>"##,
+        );
+        assert_eq!(o.problem, Some(Problem::RasterImage));
     }
 
     #[test]
