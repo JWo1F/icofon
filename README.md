@@ -43,6 +43,12 @@ cargo install --path .
 - **`fill-rule="evenodd"` is honoured.** Fonts only do non-zero winding, so
   even-odd contours are re-oriented by nesting depth; holes stay holes instead
   of filling in.
+- **White is treated as paper, not ink.** A glyph has no colour, only ink and
+  its absence, so what a white shape means depends on what is under it. Over
+  existing artwork it is a knock-out and becomes a hole — the tick cut out of a
+  filled circle, a wordmark cut out of a brand panel. Over nothing it is
+  background, like the white panel a badge is built on, and is dropped rather
+  than painted as a solid block that buries the design.
 - **`currentcolor` is accepted in any case.** SVG keywords are case-insensitive
   and design tools emit the lowercase spelling, but the underlying parser only
   matches `currentColor` and would otherwise drop the paint — turning a
@@ -69,9 +75,11 @@ Error: 4 of 410 icons cannot be turned into a glyph:
 Fix them, or pass --skip-errors to leave them out.
 ```
 
-The two cases caught are a **bitmap wrapped in an SVG** — a PNG pasted out of a
-design tool, which would otherwise come through as a solid rectangle — and a
-file that yields **nothing drawable at all**.
+The cases caught are a **bitmap wrapped in an SVG** — a PNG pasted out of a
+design tool, which would otherwise come through as a solid rectangle — artwork
+shaped by a **`<mask>`**, which decides per-pixel how much of each shape
+survives and so cannot be reduced to an outline, and a file that yields
+**nothing drawable at all**.
 
 `--skip-errors` builds the font without them and lists what it left out on
 stderr.
