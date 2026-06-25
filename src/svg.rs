@@ -111,8 +111,13 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
 
     let mut drawn = Vec::new();
     let mut found = Findings::default();
-    collect(tree.root(), &mut drawn, &mut found);
+    collect(tree.root(), 1.0, &mut drawn, &mut found);
 
+    // Paper only means anything next to ink. An icon drawn entirely in white,
+    // or entirely as a faint wash, is simply a light icon and must still be
+    // drawn — so the paper rule only applies when something else is full
+    // strength.
+    let has_ink = drawn.iter().any(|filled| !filled.background);
     let scale = f64::from(UNITS_PER_EM) / f64::from(size.height());
     let mut path = BezPath::new();
     for filled in &drawn {
@@ -121,8 +126,8 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
         if filled.even_odd {
             piece = to_nonzero_winding(&piece);
         }
-        if filled.background {
-            // Shapes are visited in paint order, so what a white shape means is
+        if filled.background && has_ink {
+            // Shapes are visited in paint order, so what a paper shape means is
             // decided by what is already under it.
             if let Some(hole) = knocked_out_of(&piece, &path) {
                 path.extend(hole);
@@ -170,14 +175,14 @@ struct Findings {
     masked: bool,
 }
 
-fn collect(group: &usvg::Group, out: &mut Vec<Filled>, found: &mut Findings) {
+fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut Findings) {
     if group.mask().is_some() {
         found.masked = true;
     }
 
     for node in group.children() {
         match node {
-            usvg::Node::Group(child) => collect(child, out, found),
+            usvg::Node::Group(child) => collect(child, alpha * child.opacity().get(), out, found),
             usvg::Node::Path(path) => {
                 if !path.is_visible() {
                     continue;
@@ -193,7 +198,7 @@ fn collect(group: &usvg::Group, out: &mut Vec<Filled>, found: &mut Findings) {
                         out.push(Filled {
                             path: p,
                             even_odd: fill.rule() == usvg::FillRule::EvenOdd,
-                            background: is_background(fill.paint()),
+                            background: is_background(fill.paint(), alpha * fill.opacity().get()),
                         });
                     }
                 }
@@ -205,7 +210,7 @@ fn collect(group: &usvg::Group, out: &mut Vec<Filled>, found: &mut Findings) {
                     out.push(Filled {
                         path: p,
                         even_odd: false,
-                        background: is_background(stroke.paint()),
+                        background: is_background(stroke.paint(), alpha * stroke.opacity().get()),
                     });
                 }
             }
@@ -250,21 +255,27 @@ fn knocked_out_of(white: &BezPath, ink: &BezPath) -> Option<BezPath> {
     })
 }
 
-/// Whether a paint is white enough to mean "background" rather than ink.
+/// Whether a paint reads as paper rather than ink.
 ///
-/// A glyph has no colour, only ink and its absence, so a white shape cannot be
-/// drawn — painting it would put ink exactly where the artwork wanted none. The
-/// clearest case is a badge built as a white panel with a dark outline and dark
-/// lettering on top: filling the panel buries the whole design under a solid
-/// block. Treating white as nothing keeps the parts that carry the shape.
+/// A glyph is ink or nothing — it has neither colour nor opacity — so two kinds
+/// of paint cannot be drawn as themselves:
 ///
-/// Order is deliberately ignored. A white shape painted *over* darker artwork is
-/// a knock-out and would ideally be subtracted, but every shape ends up in one
-/// non-zero path where drawing order is gone, so subtracting would also eat
-/// artwork that merely sits behind it. Dropping is never worse than the solid
-/// blob that painting produces, and often much better.
-fn is_background(paint: &usvg::Paint) -> bool {
+/// * **White**, which would put ink exactly where the artwork wanted none. A
+///   badge built as a white panel with dark lettering would be buried under a
+///   solid block.
+/// * **A faint wash**, a shape at low opacity used as a tint behind the real
+///   mark. Drawn at full strength it swallows whatever it was sitting behind.
+///
+/// Both are handled the same way by the caller: over existing ink they become a
+/// knock-out, and over nothing they are dropped.
+fn is_background(paint: &usvg::Paint, alpha: f32) -> bool {
+    // Below half strength a shape is a tint, not the mark itself.
+    const FAINT: f32 = 0.5;
     const NEAR_WHITE: u8 = 0xF0;
+
+    if alpha < FAINT {
+        return true;
+    }
     match paint {
         usvg::Paint::Color(color) => {
             color.red >= NEAR_WHITE && color.green >= NEAR_WHITE && color.blue >= NEAR_WHITE
@@ -565,13 +576,28 @@ mod tests {
     }
 
     #[test]
-    fn a_white_shape_over_nothing_is_simply_dropped() {
-        let o = outline(
+    fn a_white_shape_over_nothing_is_dropped_only_if_there_is_ink() {
+        // White beside ink is the panel a badge sits on, and is dropped.
+        let with_ink = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect width="24" height="24" fill="white"/>
+                  <rect x="10" y="10" width="4" height="4" fill="#000"/>
+                </svg>"##,
+        );
+        assert!(
+            !with_ink.path.contains(Point::new(100.0, 700.0)),
+            "the white panel must not be painted"
+        );
+
+        // White on its own is not a panel, it is the icon. Dropping it would
+        // leave nothing at all.
+        let alone = outline(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                   <rect width="24" height="24" fill="white"/>
                 </svg>"##,
         );
-        assert_eq!(o.problem, Some(Problem::Empty));
+        assert_eq!(alone.problem, None);
+        assert!(alone.path.contains(Point::new(500.0, 300.0)));
     }
 
     #[test]
@@ -598,6 +624,35 @@ mod tests {
                 </svg>"##,
         );
         assert_eq!(o.problem, Some(Problem::RasterImage));
+    }
+
+    #[test]
+    fn a_faint_wash_behind_the_mark_is_not_drawn() {
+        // The tinted disc behind this ring would otherwise fill solid and
+        // swallow the mark sitting on it.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                  <path opacity="0.2" d="M9 2A7 7 0 1 1 8.99 2Z" fill="#0781B5"/>
+                  <path d="M9 3.5A5.5 5.5 0 1 1 8.99 3.5Z" fill="none"
+                        stroke="#0781B5" stroke-width="1.5"/>
+                </svg>"##,
+        );
+        assert!(
+            !o.path.contains(Point::new(500.0, 300.0)),
+            "the middle must stay open, not be filled by the tint"
+        );
+    }
+
+    #[test]
+    fn an_icon_that_is_entirely_faint_is_still_drawn() {
+        // Nothing here is full strength, so the wash IS the icon.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect opacity="0.4" width="24" height="24" fill="#AD75B4"/>
+                </svg>"##,
+        );
+        assert_eq!(o.problem, None);
+        assert!(o.path.contains(Point::new(500.0, 300.0)));
     }
 
     #[test]
