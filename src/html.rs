@@ -24,6 +24,11 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
 <title>{family} — icons</title>
 <link rel="stylesheet" href="{css}">
 <script src="{tailwind}"></script>
+<style type="text/tailwindcss">
+  /* Drive dark mode from the toggle rather than the OS, so an icon can be
+     checked on both backgrounds without changing system settings. */
+  @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+</style>
 <style>
   /* An icon is one em tall but may be many ems wide, so each card is measured
      and the glyph is scaled down by its own width to fit. Square icons are
@@ -31,22 +36,41 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
   .card {{ container-type: inline-size; }}
   .glyph {{ font-size: min(2.25rem, calc((100cqw - 1.5rem) / var(--aspect, 1))); }}
 </style>
+<script>
+  // Set before first paint so the page does not flash the wrong background.
+  (() => {{
+    let saved = null;
+    try {{ saved = localStorage.getItem('icofon-theme'); }} catch {{}}
+    const system = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = saved || system;
+  }})();
+</script>
 </head>
 <body class="bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-<div class="mx-auto max-w-6xl px-4 py-8 sm:px-8">
+<div class="mx-auto max-w-6xl px-4 pb-8 sm:px-8">
 
-<header class="mb-7 flex flex-wrap items-end justify-between gap-4 border-b border-zinc-200 pb-5 dark:border-zinc-800">
+<header class="sticky top-0 z-10 mb-7 flex flex-wrap items-end justify-between gap-4
+               border-b border-zinc-200 bg-white/85 pt-8 pb-5 backdrop-blur
+               dark:border-zinc-800 dark:bg-zinc-950/85">
   <div>
     <h1 class="text-xl font-semibold tracking-tight">{family}</h1>
     <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
       <span id="shown">{total}</span> of {total} icons
     </p>
   </div>
-  <input id="search" type="search" placeholder="Search icons…" autocomplete="off" autofocus
-         class="w-full max-w-sm rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm
-                placeholder:text-zinc-400 focus:border-transparent focus:outline-2
-                focus:outline-blue-600 dark:border-zinc-800 dark:bg-zinc-900
-                dark:placeholder:text-zinc-500 dark:focus:outline-blue-400">
+  <div class="flex w-full max-w-sm items-center gap-2">
+    <input id="search" type="search" placeholder="Search icons…" autocomplete="off" autofocus
+           class="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm
+                  placeholder:text-zinc-400 focus:border-transparent focus:outline-2
+                  focus:outline-blue-600 dark:border-zinc-800 dark:bg-zinc-900
+                  dark:placeholder:text-zinc-500 dark:focus:outline-blue-400">
+    <div class="flex shrink-0 rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-800">
+      <button type="button" data-theme-set="light" title="Light background"
+              class="theme-btn cursor-pointer rounded-md px-2 py-1 text-sm">☀</button>
+      <button type="button" data-theme-set="dark" title="Dark background"
+              class="theme-btn cursor-pointer rounded-md px-2 py-1 text-sm">☾</button>
+    </div>
+  </div>
 </header>
 
 <main>
@@ -186,6 +210,28 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   const shown = document.getElementById('shown');
   const empty = document.getElementById('empty');
   const toast = document.getElementById('toast');
+
+  const themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
+  function paintTheme() {
+    const active = document.documentElement.dataset.theme;
+    for (const button of themeButtons) {
+      const on = button.dataset.themeSet === active;
+      button.classList.toggle('bg-zinc-900', on);
+      button.classList.toggle('text-white', on);
+      button.classList.toggle('dark:bg-zinc-100', on);
+      button.classList.toggle('dark:text-zinc-900', on);
+      button.classList.toggle('text-zinc-400', !on);
+    }
+  }
+  for (const button of themeButtons) {
+    button.addEventListener('click', () => {
+      const theme = button.dataset.themeSet;
+      document.documentElement.dataset.theme = theme;
+      try { localStorage.setItem('icofon-theme', theme); } catch {}
+      paintTheme();
+    });
+  }
+  paintTheme();
 
   search.addEventListener('input', () => {
     const query = search.value.trim().toLowerCase();
