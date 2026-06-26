@@ -43,12 +43,14 @@ cargo install --path .
 - **`fill-rule="evenodd"` is honoured.** Fonts only do non-zero winding, so
   even-odd contours are re-oriented by nesting depth; holes stay holes instead
   of filling in.
-- **White is treated as paper, not ink.** A glyph has no colour, only ink and
-  its absence, so what a white shape means depends on what is under it. Over
-  existing artwork it is a knock-out and becomes a hole — the tick cut out of a
-  filled circle, a wordmark cut out of a brand panel. Over nothing it is
-  background, like the white panel a badge is built on, and is dropped rather
-  than painted as a solid block that buries the design.
+- **White and faint washes are treated as paper, not ink.** A glyph has neither
+  colour nor opacity, so a white shape — or a shape at low opacity used as a
+  tint — cannot be drawn as itself. What it means depends on what is under it:
+  over existing artwork it is a knock-out and becomes a hole (the tick cut out
+  of a filled circle, a wordmark cut out of a brand panel), and over nothing it
+  is background and is dropped, rather than painted as a solid block that buries
+  the design. An icon drawn *entirely* in white, or entirely as a wash, is just
+  a light icon and is still drawn.
 - **`currentcolor` is accepted in any case.** SVG keywords are case-insensitive
   and design tools emit the lowercase spelling, but the underlying parser only
   matches `currentColor` and would otherwise drop the paint — turning a
@@ -136,6 +138,9 @@ codepoint — the old one is retired, not reused.
 showing the glyph, its name, its CSS class and its codepoint. Search filters on
 all of those — type a name, a class, a hex code or a folder — and groups that
 lose all their icons collapse with them. Clicking a class name copies it.
+
+The header stays put while you scroll, and a light/dark switch next to the
+search box previews the icons on both backgrounds — the choice is remembered.
 
 Icons are one em tall but may be many ems wide. Each card is told its icon's
 aspect ratio and scales the glyph down to fit, so a wordmark 16 times wider than
