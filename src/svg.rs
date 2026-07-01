@@ -12,6 +12,23 @@ use crate::font::{ASCENDER, UNITS_PER_EM};
 /// units. A thousandth of the em is far below what any rasterizer can show.
 const CUBIC_TO_QUAD_ACCURACY: f64 = 0.2;
 
+/// The colour a layer is drawn in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LayerPaint {
+    /// Drawn with `currentColor`, so it follows the CSS `color` of whatever the
+    /// icon sits in — the same behaviour a plain monochrome glyph has.
+    Foreground,
+    /// Drawn in a colour the artwork names, which is kept as drawn.
+    Fixed { r: u8, g: u8, b: u8, a: u8 },
+}
+
+/// One colour's worth of an icon. Layers are in paint order, bottom first.
+#[derive(Debug)]
+pub struct Layer {
+    pub path: BezPath,
+    pub paint: LayerPaint,
+}
+
 /// One icon's artwork, already scaled and flipped into the font's coordinate
 /// system: y points up, the baseline is y = 0.
 #[derive(Debug)]
@@ -22,6 +39,11 @@ pub struct Outline {
     /// Set when the SVG cannot be faithfully turned into a glyph, so the caller
     /// can report it instead of shipping a blank or blacked-out icon.
     pub problem: Option<Problem>,
+    /// The icon split by colour, bottom layer first.
+    ///
+    /// Empty when the icon is drawn entirely in `currentColor`, which needs no
+    /// colour table: `path` alone is the glyph and it follows the CSS `color`.
+    pub layers: Vec<Layer>,
 }
 
 /// A reason an SVG cannot become a glyph.
@@ -67,6 +89,61 @@ pub fn load(file: &Path) -> Result<Outline> {
     parse(&data, &file.display().to_string())
 }
 
+/// A colour no icon would choose, used to mark `currentColor` so it can still
+/// be told apart after usvg resolves it to a concrete value.
+const FOREGROUND_SENTINEL: usvg::Color = usvg::Color {
+    red: 0x01,
+    green: 0x02,
+    blue: 0x03,
+};
+
+/// Give the root `<svg>` a `color` so `currentColor` resolves to the sentinel.
+///
+/// usvg resolves `currentColor` while parsing and keeps no record of it, so
+/// without this a shape drawn with `currentColor` is indistinguishable from one
+/// drawn in black — and the two want opposite treatment, one following the CSS
+/// `color` and the other staying as drawn.
+///
+/// An `svg` element that already sets `color` is left alone: there
+/// `currentColor` names a colour the artwork chose, which is not the foreground.
+fn mark_current_color(data: Vec<u8>) -> Vec<u8> {
+    let Some(open) = find(&data, b"<svg") else {
+        return data;
+    };
+    let Some(close) = data[open..]
+        .iter()
+        .position(|b| *b == b'>')
+        .map(|i| open + i)
+    else {
+        return data;
+    };
+    let tag = &data[open..close];
+    if find(tag, b"color=").is_some_and(|at| {
+        // `fill-color=` and the like do not count; the attribute must stand alone.
+        at == 0 || !tag[at - 1].is_ascii_alphanumeric() && tag[at - 1] != b'-'
+    }) {
+        return data;
+    }
+
+    let mut out = Vec::with_capacity(data.len() + 24);
+    out.extend_from_slice(&data[..open + 4]);
+    out.extend_from_slice(
+        format!(
+            " color=\"#{:02x}{:02x}{:02x}\"",
+            FOREGROUND_SENTINEL.red, FOREGROUND_SENTINEL.green, FOREGROUND_SENTINEL.blue
+        )
+        .as_bytes(),
+    );
+    out.extend_from_slice(&data[open + 4..]);
+    out
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 /// Rewrite `currentcolor` to the spelling usvg accepts.
 ///
 /// SVG and CSS keywords are case-insensitive, so `currentcolor` is valid and
@@ -100,7 +177,7 @@ fn normalize_current_color(data: &[u8]) -> Vec<u8> {
 
 /// The body of [`load`], split out so it can be exercised without touching disk.
 pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
-    let data = normalize_current_color(data);
+    let data = mark_current_color(normalize_current_color(data));
     let tree = usvg::Tree::from_data(&data, &usvg::Options::default())
         .with_context(|| format!("parsing {source}"))?;
 
@@ -138,6 +215,7 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
     }
 
     let path = cubics_to_quads(&path);
+    let layers = build_layers(&drawn, scale);
     let problem = if found.raster {
         Some(Problem::RasterImage)
     } else if found.masked {
@@ -152,6 +230,7 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
         path,
         advance: (f64::from(size.width()) * scale).round().max(0.0) as u16,
         problem,
+        layers,
     })
 }
 
@@ -159,8 +238,10 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
 struct Filled {
     path: tiny_skia_path::Path,
     even_odd: bool,
-    /// White shapes are not ink; what they mean depends on what is under them.
+    /// Paper shapes are not ink; what they mean depends on what is under them.
+    /// Only the flattened outline cares — a colour layer keeps its own colour.
     background: bool,
+    paint: LayerPaint,
 }
 
 /// Walk the usvg tree and collect every visible path, in absolute coordinates.
@@ -195,10 +276,12 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
                     if matches!(fill.paint(), usvg::Paint::Pattern(_)) {
                         found.raster = true;
                     } else if let Some(p) = path.data().clone().transform(transform) {
+                        let alpha = alpha * fill.opacity().get();
                         out.push(Filled {
                             path: p,
                             even_odd: fill.rule() == usvg::FillRule::EvenOdd,
-                            background: is_background(fill.paint(), alpha * fill.opacity().get()),
+                            background: is_background(fill.paint(), alpha),
+                            paint: layer_paint(fill.paint(), alpha),
                         });
                     }
                 }
@@ -207,10 +290,12 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
                         stroke_outline(path.data(), stroke).and_then(|p| p.transform(transform))
                 {
                     // A stroke outline is always a non-zero shape.
+                    let alpha = alpha * stroke.opacity().get();
                     out.push(Filled {
                         path: p,
                         even_odd: false,
-                        background: is_background(stroke.paint(), alpha * stroke.opacity().get()),
+                        background: is_background(stroke.paint(), alpha),
+                        paint: layer_paint(stroke.paint(), alpha),
                     });
                 }
             }
@@ -219,6 +304,55 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
             _ => {}
         }
     }
+}
+
+/// Split the artwork into one layer per run of shapes sharing a colour.
+///
+/// Returns nothing unless the icon actually uses more than one colour, in which
+/// case it stays a plain glyph that follows the CSS `color`.
+///
+/// What colour buys is the *relationship* between colours, which flattening
+/// destroys: the white lettering on a dark badge, the three panels of a card
+/// logo. A single flat colour has no such relationship — pinning it would only
+/// take away the ability to recolour the icon, and an icon frozen in a mid grey
+/// disappears against a dark background.
+///
+/// Colour layers are built from the artwork as drawn. None of the paper rules
+/// apply here — with real colours available, white is white again and a wash is
+/// a wash, so a badge keeps its white panel instead of having it dropped.
+fn build_layers(drawn: &[Filled], scale: f64) -> Vec<Layer> {
+    let mut seen: Vec<LayerPaint> = Vec::new();
+    for filled in drawn {
+        if !seen.contains(&filled.paint) {
+            seen.push(filled.paint);
+        }
+    }
+    if seen.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut layers: Vec<Layer> = Vec::new();
+    for filled in drawn {
+        let mut piece = BezPath::new();
+        append_scaled(&mut piece, &filled.path, scale);
+        if filled.even_odd {
+            piece = to_nonzero_winding(&piece);
+        }
+        let piece = cubics_to_quads(&piece);
+        if piece.is_empty() {
+            continue;
+        }
+
+        // Consecutive shapes of one colour are a single layer.
+        match layers.last_mut() {
+            Some(last) if last.paint == filled.paint => last.path.extend(piece),
+            _ => layers.push(Layer {
+                path: piece,
+                paint: filled.paint,
+            }),
+        }
+    }
+    layers
 }
 
 /// Turn a white shape into a hole in `ink`, if that is what it was doing.
@@ -253,6 +387,33 @@ fn knocked_out_of(white: &BezPath, ink: &BezPath) -> Option<BezPath> {
     } else {
         white.reverse_subpaths()
     })
+}
+
+/// The colour a shape contributes to the colour table.
+///
+/// A gradient is reduced to its first stop: a glyph layer is one flat colour, so
+/// the choice is which single colour best stands for the ramp, and the colour it
+/// starts from is the most predictable answer.
+fn layer_paint(paint: &usvg::Paint, alpha: f32) -> LayerPaint {
+    let opaque = |color: usvg::Color| LayerPaint::Fixed {
+        r: color.red,
+        g: color.green,
+        b: color.blue,
+        a: (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+    };
+    match paint {
+        usvg::Paint::Color(color) if *color == FOREGROUND_SENTINEL => LayerPaint::Foreground,
+        usvg::Paint::Color(color) => opaque(*color),
+        usvg::Paint::LinearGradient(gradient) => gradient
+            .stops()
+            .first()
+            .map_or(LayerPaint::Foreground, |stop| opaque(stop.color())),
+        usvg::Paint::RadialGradient(gradient) => gradient
+            .stops()
+            .first()
+            .map_or(LayerPaint::Foreground, |stop| opaque(stop.color())),
+        usvg::Paint::Pattern(_) => LayerPaint::Foreground,
+    }
 }
 
 /// Whether a paint reads as paper rather than ink.
@@ -653,6 +814,125 @@ mod tests {
         );
         assert_eq!(o.problem, None);
         assert!(o.path.contains(Point::new(500.0, 300.0)));
+    }
+
+    #[test]
+    fn a_single_colour_icon_stays_a_recolourable_symbol() {
+        // One flat colour has no relationship for colour to preserve, and
+        // pinning it would stop the icon following the CSS `color`.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M2 2h20v20H2Z" fill="#3F3C43"/>
+                  <path d="M6 6h12v4H6Z" fill="#3F3C43"/>
+                </svg>"##,
+        );
+        assert!(o.layers.is_empty());
+    }
+
+    #[test]
+    fn an_icon_drawn_in_current_color_stays_a_symbol() {
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M2 2h20v20H2Z" fill="currentColor"/>
+                </svg>"##,
+        );
+        assert!(o.layers.is_empty());
+    }
+
+    #[test]
+    fn two_colours_become_layers_in_paint_order() {
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M0 0h24v24H0Z" fill="#FF4F00"/>
+                  <path d="M6 6h12v12H6Z" fill="white"/>
+                </svg>"##,
+        );
+        let paints: Vec<_> = o.layers.iter().map(|l| l.paint).collect();
+        assert_eq!(
+            paints,
+            [
+                LayerPaint::Fixed {
+                    r: 0xFF,
+                    g: 0x4F,
+                    b: 0x00,
+                    a: 255
+                },
+                LayerPaint::Fixed {
+                    r: 0xFF,
+                    g: 0xFF,
+                    b: 0xFF,
+                    a: 255
+                },
+            ],
+            "the panel is the bottom layer and the mark sits on it"
+        );
+    }
+
+    #[test]
+    fn current_color_survives_beside_a_fixed_colour() {
+        // The tick follows the CSS colour while the disc stays blue.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" fill="#0781B5"/>
+                  <path d="M7 12l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2"/>
+                </svg>"##,
+        );
+        let paints: Vec<_> = o.layers.iter().map(|l| l.paint).collect();
+        assert_eq!(
+            paints,
+            [
+                LayerPaint::Fixed {
+                    r: 0x07,
+                    g: 0x81,
+                    b: 0xB5,
+                    a: 255
+                },
+                LayerPaint::Foreground,
+            ]
+        );
+    }
+
+    #[test]
+    fn an_svg_that_sets_its_own_color_keeps_it() {
+        // Here `currentColor` names a colour the artwork chose, so it is not
+        // the foreground and the icon is a two-colour one.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" color="#FF0000">
+                  <path d="M0 0h24v24H0Z" fill="currentColor"/>
+                  <path d="M6 6h12v12H6Z" fill="#0000FF"/>
+                </svg>"##,
+        );
+        let paints: Vec<_> = o.layers.iter().map(|l| l.paint).collect();
+        assert_eq!(
+            paints,
+            [
+                LayerPaint::Fixed {
+                    r: 0xFF,
+                    g: 0,
+                    b: 0,
+                    a: 255
+                },
+                LayerPaint::Fixed {
+                    r: 0,
+                    g: 0,
+                    b: 0xFF,
+                    a: 255
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn the_flattened_outline_is_still_built_for_a_colour_icon() {
+        // COLR needs a base glyph for renderers without colour support.
+        let o = outline(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M0 0h24v24H0Z" fill="#FF4F00"/>
+                  <path d="M6 6h12v12H6Z" fill="white"/>
+                </svg>"##,
+        );
+        assert!(!o.layers.is_empty());
+        assert!(!o.path.is_empty(), "the fallback outline must still exist");
     }
 
     #[test]
