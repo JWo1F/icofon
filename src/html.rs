@@ -39,10 +39,12 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
 <script>
   // Set before first paint so the page does not flash the wrong background.
   (() => {{
+    // Light by default: icons are drawn for a white page, so that is the
+    // honest first impression. The dark switch is there to check them against
+    // the other background.
     let saved = null;
     try {{ saved = localStorage.getItem('icofon-theme'); }} catch {{}}
-    const system = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    document.documentElement.dataset.theme = saved || system;
+    document.documentElement.dataset.theme = saved || 'light';
   }})();
 </script>
 </head>
@@ -157,6 +159,15 @@ fn card(icon: &Icon, prefix: &str) -> String {
     // How many ems wide the glyph is. A wide icon would otherwise run straight
     // out of its card, so the stylesheet divides the display size by this.
     let aspect = f64::from(icon.outline.advance) / f64::from(crate::font::UNITS_PER_EM);
+    // A colour icon paints its own colours, so it will not follow the CSS
+    // `color` the way the rest do. Worth saying on the card.
+    let colour_note = if icon.outline.layers.is_empty() {
+        String::new()
+    } else {
+        r#"
+        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">fixed colour</code>"#
+            .to_string()
+    };
     let width_note = if aspect >= 1.5 {
         format!(
             r#"
@@ -172,7 +183,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
                    px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
       <span class="glyph {class} leading-none" aria-hidden="true"></span>
       <figcaption class="flex w-full flex-col items-center gap-1">
-        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>{width_note}
+        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>{width_note}{colour_note}
         <button type="button" data-copy="{class}" title="Copy class name"
                 class="name max-w-full cursor-pointer rounded-md px-1.5 py-0.5 font-mono text-[12px]
                        break-all text-zinc-500 hover:bg-blue-600/10 hover:text-blue-700
@@ -189,6 +200,11 @@ fn card(icon: &Icon, prefix: &str) -> String {
                 class.as_str(),
                 &format!("{code:04x}"),
                 icon.group.as_deref().unwrap_or_default(),
+                if icon.outline.layers.is_empty() {
+                    ""
+                } else {
+                    "colour color"
+                },
             ]
             .iter()
             .filter(|part| !part.is_empty())
@@ -201,6 +217,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
         code = code,
         aspect = aspect,
         width_note = width_note,
+        colour_note = colour_note,
     )
 }
 
@@ -337,6 +354,24 @@ mod tests {
         assert!(page.contains(r#"<span class="glyph ico-star "#));
         assert!(page.contains("U+E9F0"));
         assert_eq!(page.matches("data-search=").count(), icons.len());
+    }
+
+    #[test]
+    fn colour_icons_are_marked_and_searchable() {
+        let mut colourful = icon("brand", '\u{e900}');
+        colourful.outline.layers.push(crate::svg::Layer {
+            path: kurbo::BezPath::new(),
+            paint: crate::svg::LayerPaint::Foreground,
+        });
+        let page = render(&[colourful], "Icons", "icon", "f.css");
+        assert!(page.contains("fixed colour"));
+        assert!(page.contains("colour color"));
+    }
+
+    #[test]
+    fn plain_icons_are_not_marked_as_colour() {
+        let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
+        assert!(!page.contains("fixed colour"));
     }
 
     #[test]
