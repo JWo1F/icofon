@@ -1,10 +1,12 @@
 {
   "codepoints": {
+    "badge-colour": "e905",
     "bars-wide-bar": "e901",
     "check": "e900",
     "shapes-blocks": "e902",
     "shapes-evenodd-donut": "e903",
     "shapes-ring": "e904",
+    "shapes-tinted-ring": "e906",
     "star-filled": "e9f0"
   }
 }
