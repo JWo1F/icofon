@@ -55,12 +55,44 @@ cargo install --path .
   and design tools emit the lowercase spelling, but the underlying parser only
   matches `currentColor` and would otherwise drop the paint — turning a
   stroke-drawn icon into a blank glyph.
+- **Multi-colour icons keep their colours.** An icon that uses more than one
+  colour is emitted as COLR/CPAL layers, so a card logo or a brand badge renders
+  as drawn. Layers painted with `currentColor` use the palette entry reserved
+  for the text colour, so they still follow CSS `color` while their neighbours
+  stay fixed. Everything else stays a plain glyph — see below.
 - **The viewBox height maps onto one em.** An icon drawn edge to edge in its
   viewBox renders exactly `1em` tall. Width is scaled to match and becomes the
   glyph's advance, so non-square icons keep their proportions.
 
 The em box runs from 200 units below the baseline to 800 above it, which puts
 icons at the height that lines up with running text without extra CSS.
+
+## Colour
+
+Most icons should follow the CSS `color` of whatever they sit in, and by default
+they do: an icon that uses a single colour — whether that is `currentColor` or a
+hardcoded `#3F3C43` — is a plain monochrome glyph and recolours freely.
+
+Colour is only used when an icon needs it, which is when it uses **two or more
+colours**. What colour buys is the *relationship* between them: the white
+lettering on a dark badge, the three panels of a card logo. Flattening destroys
+that. A single flat colour has no such relationship, so pinning it would take
+away recolouring and gain nothing — and an icon frozen in a mid grey disappears
+against a dark background.
+
+```
+arrow-right.svg   fill="#3F3C43"          -> plain glyph, follows CSS color
+user.svg          fill="currentColor"     -> plain glyph, follows CSS color
+mastercard.svg    red + orange + white    -> COLR layers, keeps its colours
+circle-check.svg  blue disc + currentColor tick
+                                          -> COLR: disc stays blue, tick follows CSS color
+```
+
+Colour icons still carry the flattened monochrome outline as their base glyph,
+which is what a renderer without COLR support falls back to. The preview page
+marks them "fixed colour" so it is clear which ones will not follow your CSS.
+
+Gradients are reduced to their first stop, since a layer is one flat colour.
 
 ## Icons that cannot become glyphs
 
