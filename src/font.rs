@@ -1,7 +1,5 @@
 //! Assembling the parsed icons into a TrueType font.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use anyhow::{Context, Result, bail};
 use write_fonts::{
     FontBuilder,
@@ -35,6 +33,13 @@ pub const DESCENDER: i16 = -200;
 
 /// Seconds between the TrueType epoch (1904-01-01) and the Unix epoch.
 const MAC_EPOCH_OFFSET: i64 = 2_082_844_800;
+
+/// Creation date stamped into every font, as a Unix timestamp: 2024-01-01.
+///
+/// Deliberately fixed rather than "now". The same icons must compile to the
+/// same bytes every time, or a font committed alongside its sources shows up as
+/// changed on every build and every rebuild is a diff to review.
+const BUILD_TIMESTAMP: i64 = 1_704_067_200;
 
 /// Advance given to `.notdef`, which we emit as a blank glyph.
 const NOTDEF_ADVANCE: u16 = UNITS_PER_EM / 2;
@@ -145,8 +150,8 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
         // Baseline at y=0 and left side bearing at x=0, both true by construction.
         flags: Flags::from_bits_truncate(0b11),
         units_per_em: UNITS_PER_EM,
-        created: now(),
-        modified: now(),
+        created: stamp(),
+        modified: stamp(),
         x_min: bounds.x_min,
         y_min: bounds.y_min,
         x_max: bounds.x_max,
@@ -408,11 +413,8 @@ fn name_table(family: &str) -> Name {
     Name::new(records)
 }
 
-fn now() -> LongDateTime {
-    let unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    LongDateTime::new(unix + MAC_EPOCH_OFFSET)
+fn stamp() -> LongDateTime {
+    LongDateTime::new(BUILD_TIMESTAMP + MAC_EPOCH_OFFSET)
 }
 
 #[cfg(test)]
