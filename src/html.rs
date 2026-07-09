@@ -16,7 +16,7 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     let mut page = String::new();
 
     page.push_str(&format!(
-        r#"<!doctype html>
+        r##"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -34,7 +34,11 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
      and the glyph is scaled down by its own width to fit. Square icons are
      unaffected: their --aspect is 1. */
   .card {{ container-type: inline-size; }}
-  .glyph {{ font-size: min(2.25rem, calc((100cqw - 1.5rem) / var(--aspect, 1))); }}
+  .glyph {{
+    font-size: min(2.25rem, calc((100cqw - 1.5rem) / var(--aspect, 1)));
+    /* Only the glyphs follow the colour picker; labels stay readable. */
+    color: var(--icon-colour, inherit);
+  }}
 </style>
 <script>
   // Set before first paint so the page does not flash the wrong background.
@@ -73,14 +77,34 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
               class="theme-btn cursor-pointer rounded-md px-2 py-1 text-sm">☾</button>
     </div>
   </div>
+  <div class="flex w-full items-center gap-2">
+    <span class="text-xs text-zinc-500 dark:text-zinc-400">Colour</span>
+    <div id="swatches" class="flex flex-wrap items-center gap-1.5">
+      <button type="button" data-colour="" title="Follow the page"
+              class="swatch size-6 cursor-pointer rounded-full border border-zinc-300
+                     bg-zinc-900 dark:border-zinc-700 dark:bg-zinc-100"></button>
+{swatches}    </div>
+    <input id="picker" type="color" value="#2563eb" title="Pick any colour"
+           class="size-7 cursor-pointer rounded border border-zinc-200 bg-transparent
+                  dark:border-zinc-800">
+    <span id="colour-note" class="text-xs text-zinc-400 dark:text-zinc-500"></span>
+  </div>
 </header>
 
 <main>
-"#,
+"##,
         family = family,
         css = escape(css_url),
         tailwind = TAILWIND_CDN,
         total = icons.len(),
+        swatches = SWATCHES
+            .iter()
+            .map(|colour| format!(
+                "      <button type=\"button\" data-colour=\"{colour}\" title=\"{colour}\"\n\
+                 \x20             class=\"swatch size-6 cursor-pointer rounded-full border \
+                 border-black/10 dark:border-white/15\" style=\"background:{colour}\"></button>\n"
+            ))
+            .collect::<String>(),
     ));
 
     // Icons arrive sorted by group, so consecutive runs share a section.
@@ -221,12 +245,46 @@ fn card(icon: &Icon, prefix: &str) -> String {
     )
 }
 
+/// Preset colours for the preview. Enough to check an icon against a light and
+/// a dark foreground and a few brand-ish hues, without turning into a palette
+/// editor.
+const SWATCHES: [&str; 7] = [
+    "#71717a", "#2563eb", "#0d9488", "#16a34a", "#ca8a04", "#dc2626", "#9333ea",
+];
+
 const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.card'));
   const groups = Array.from(document.querySelectorAll('.group'));
   const search = document.getElementById('search');
   const shown = document.getElementById('shown');
   const empty = document.getElementById('empty');
   const toast = document.getElementById('toast');
+
+  // The picker sets a custom property on <main> that only .glyph reads, so the
+  // icons follow it while the card text stays readable. Icons drawn with
+  // currentColor pick it up; COLR icons keep the colours baked into the font.
+  const grid = document.querySelector('main');
+  const swatches = Array.from(document.querySelectorAll('.swatch'));
+  const picker = document.getElementById('picker');
+  const colourNote = document.getElementById('colour-note');
+
+  function applyColour(colour) {
+    grid.style.setProperty('--icon-colour', colour || 'inherit');
+    colourNote.textContent = colour || '';
+    for (const swatch of swatches) {
+      const on = (swatch.dataset.colour || '') === (colour || '');
+      swatch.classList.toggle('ring-2', on);
+      swatch.classList.toggle('ring-blue-500', on);
+      swatch.classList.toggle('ring-offset-1', on);
+    }
+    try { localStorage.setItem('icofon-colour', colour || ''); } catch {}
+  }
+  for (const swatch of swatches) {
+    swatch.addEventListener('click', () => applyColour(swatch.dataset.colour || ''));
+  }
+  picker.addEventListener('input', () => applyColour(picker.value));
+  let storedColour = '';
+  try { storedColour = localStorage.getItem('icofon-colour') || ''; } catch {}
+  applyColour(storedColour);
 
   const themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
   function paintTheme() {
@@ -354,6 +412,20 @@ mod tests {
         assert!(page.contains(r#"<span class="glyph ico-star "#));
         assert!(page.contains("U+E9F0"));
         assert_eq!(page.matches("data-search=").count(), icons.len());
+    }
+
+    #[test]
+    fn the_header_offers_a_colour_palette() {
+        let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
+        for swatch in SWATCHES {
+            assert!(
+                page.contains(&format!(r#"data-colour="{swatch}""#)),
+                "{swatch}"
+            );
+        }
+        // Plus "follow the page" and a free-form picker.
+        assert!(page.contains(r#"data-colour="""#));
+        assert!(page.contains(r#"id="picker" type="color""#));
     }
 
     #[test]
