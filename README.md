@@ -123,6 +123,9 @@ opacity flatten to solid fills, since a glyph is monochrome.
 
 ## Adding icons later
 
+Builds are reproducible: the same icons compile to the same bytes every time,
+so a font committed alongside its sources only changes when the icons do.
+
 Codepoints are recorded in `icofon.json` inside the icon folder. On every build
 an icon keeps the codepoint it already had, and only icons icofon has never seen
 get a new one — so dropping `aardvark.svg` into a set does not shift everything
@@ -171,8 +174,10 @@ showing the glyph, its name, its CSS class and its codepoint. Search filters on
 all of those — type a name, a class, a hex code or a folder — and groups that
 lose all their icons collapse with them. Clicking a class name copies it.
 
-The header stays put while you scroll, and a light/dark switch next to the
-search box previews the icons on both backgrounds — the choice is remembered.
+The header stays put while you scroll. Next to the search box, a light/dark
+switch previews the icons on both backgrounds, and a colour palette (plus a
+free-form picker) recolours them, which is the quickest way to see which icons
+follow your CSS `color` and which carry their own. Both choices are remembered.
 
 Icons are one em tall but may be many ems wide. Each card is told its icon's
 aspect ratio and scales the glyph down to fit, so a wordmark 16 times wider than
