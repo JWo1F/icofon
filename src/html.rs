@@ -39,6 +39,20 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     /* Only the glyphs follow the colour picker; labels stay readable. */
     color: var(--icon-colour, inherit);
   }}
+  /* A colour input is a square with a chrome border by default; strip it back
+     so it sits in the swatch row as one more circle. */
+  #picker {{
+    -webkit-appearance: none;
+    appearance: none;
+    padding: 0;
+    border: none;
+    background: none;
+    border-radius: 9999px;
+    overflow: hidden;
+  }}
+  #picker::-webkit-color-swatch-wrapper {{ padding: 0; }}
+  #picker::-webkit-color-swatch {{ border: none; border-radius: 9999px; }}
+  #picker::-moz-color-swatch {{ border: none; border-radius: 9999px; }}
 </style>
 <script>
   // Set before first paint so the page does not flash the wrong background.
@@ -85,8 +99,8 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
                      bg-zinc-900 dark:border-zinc-700 dark:bg-zinc-100"></button>
 {swatches}    </div>
     <input id="picker" type="color" value="#2563eb" title="Pick any colour"
-           class="size-7 cursor-pointer rounded border border-zinc-200 bg-transparent
-                  dark:border-zinc-800">
+           class="size-6 shrink-0 cursor-pointer rounded-full ring-1 ring-black/10
+                  dark:ring-white/15">
     <span id="colour-note" class="text-xs text-zinc-400 dark:text-zinc-500"></span>
   </div>
 </header>
