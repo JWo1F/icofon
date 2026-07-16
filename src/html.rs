@@ -1,6 +1,7 @@
 //! A browsable preview page listing every icon in the generated font.
 
 use crate::font::Icon;
+use crate::svg::Colouring;
 
 /// Tailwind's browser build compiles utility classes at runtime, so the preview
 /// page needs no build step of its own.
@@ -23,13 +24,23 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{family} — icons</title>
 <link rel="stylesheet" href="{css}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script src="{tailwind}"></script>
 <style type="text/tailwindcss">
   /* Drive dark mode from the toggle rather than the OS, so an icon can be
      checked on both backgrounds without changing system settings. */
   @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+  @theme {{
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+  }}
 </style>
 <style>
+  :root {{ --bar: #ffffff; --hair: rgba(9,9,11,.10); }}
+  [data-theme="dark"] {{ --bar: #09090b; --hair: rgba(250,250,250,.14); }}
+
   /* An icon is one em tall but may be many ems wide, so each card is measured
      and the glyph is scaled down by its own width to fit. Square icons are
      unaffected: their --aspect is 1. */
@@ -39,78 +50,126 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     /* Only the glyphs follow the colour picker; labels stay readable. */
     color: var(--icon-colour, inherit);
   }}
-  /* A colour input is a square with a chrome border by default; strip it back
-     so it sits in the swatch row as one more circle. */
+
+  /* The bar carries the page background only once it is actually stuck, so at
+     rest it reads as part of the page rather than as a floating chrome bar. */
+  #bar {{ transition: background-color .25s ease, box-shadow .25s ease; }}
+  #bar .bar-pad {{ padding-top: 2.75rem; padding-bottom: 1.1rem; transition: padding .25s ease; }}
+  #bar .bar-title {{ font-size: clamp(2rem, 5vw, 2.75rem); transition: font-size .25s ease; }}
+  #bar .bar-sub {{ max-height: 3rem; opacity: 1; transition: max-height .25s ease, opacity .2s ease; }}
+  #bar[data-stuck] {{ background: color-mix(in srgb, var(--bar) 88%, transparent); backdrop-filter: saturate(1.4) blur(14px); }}
+  #bar[data-stuck] .bar-pad {{ padding-top: .8rem; padding-bottom: .8rem; }}
+  #bar[data-stuck] .bar-title {{ font-size: 1.2rem; }}
+  #bar[data-stuck] .bar-sub {{ max-height: 0; opacity: 0; overflow: hidden; }}
+  /* A hairline that fades out at both ends, so the bar sits on the page
+     instead of being boxed in by it. */
+  .hairline {{ height: 1px; background: linear-gradient(90deg, transparent, var(--hair) 12%, var(--hair) 88%, transparent); }}
+
+  /* A colour input is a bordered square by default. It is made round, and then
+     ringed in spectrum so it reads as "choose any colour" rather than as one
+     more preset to pick from. */
   #picker {{
-    -webkit-appearance: none;
-    appearance: none;
-    padding: 0;
-    border: none;
-    background: none;
-    border-radius: 9999px;
-    overflow: hidden;
+    -webkit-appearance: none; appearance: none;
+    padding: 0; border: none; background: none;
+    border-radius: 9999px; overflow: hidden;
+    width: 100%; height: 100%; display: block;
   }}
   #picker::-webkit-color-swatch-wrapper {{ padding: 0; }}
   #picker::-webkit-color-swatch {{ border: none; border-radius: 9999px; }}
   #picker::-moz-color-swatch {{ border: none; border-radius: 9999px; }}
+  .picker-ring {{
+    background: conic-gradient(from 200deg, #ef4444, #f59e0b, #facc15, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444);
+    padding: 2px; border-radius: 9999px; width: 1.6rem; height: 1.6rem;
+    display: grid; place-items: center; cursor: pointer;
+    transition: transform .15s ease;
+  }}
+  .picker-ring:hover {{ transform: scale(1.12); }}
+  .swatch {{ transition: transform .15s ease; }}
+  .swatch:hover {{ transform: scale(1.15); }}
 </style>
 <script>
   // Set before first paint so the page does not flash the wrong background.
+  // Light by default: icons are drawn for a white page, so that is the honest
+  // first impression. The dark switch is there to check the other background.
   (() => {{
-    // Light by default: icons are drawn for a white page, so that is the
-    // honest first impression. The dark switch is there to check them against
-    // the other background.
     let saved = null;
     try {{ saved = localStorage.getItem('icofon-theme'); }} catch {{}}
     document.documentElement.dataset.theme = saved || 'light';
   }})();
 </script>
 </head>
-<body class="bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-<div class="mx-auto max-w-6xl px-4 pb-8 sm:px-8">
+<body class="bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
+<div class="mx-auto max-w-6xl px-5 pb-20 sm:px-8">
 
-<header class="sticky top-0 z-10 mb-7 flex flex-wrap items-end justify-between gap-4
-               border-b border-zinc-200 bg-white/85 pt-8 pb-5 backdrop-blur
-               dark:border-zinc-800 dark:bg-zinc-950/85">
-  <div>
-    <h1 class="text-xl font-semibold tracking-tight">{family}</h1>
-    <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-      <span id="shown">{total}</span> of {total} icons
-    </p>
-  </div>
-  <div class="flex w-full max-w-sm items-center gap-2">
-    <input id="search" type="search" placeholder="Search icons…" autocomplete="off" autofocus
-           class="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm
-                  placeholder:text-zinc-400 focus:border-transparent focus:outline-2
-                  focus:outline-blue-600 dark:border-zinc-800 dark:bg-zinc-900
-                  dark:placeholder:text-zinc-500 dark:focus:outline-blue-400">
-    <div class="flex shrink-0 rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-800">
-      <button type="button" data-theme-set="light" title="Light background"
-              class="theme-btn cursor-pointer rounded-md px-2 py-1 text-sm">☀</button>
-      <button type="button" data-theme-set="dark" title="Dark background"
-              class="theme-btn cursor-pointer rounded-md px-2 py-1 text-sm">☾</button>
+<div id="sentinel" aria-hidden="true"></div>
+<header id="bar" class="sticky top-0 z-20 -mx-5 px-5 sm:-mx-8 sm:px-8">
+  <div class="bar-pad">
+
+    <div class="flex items-end justify-between gap-6">
+      <div class="min-w-0">
+        <h1 class="bar-title font-display leading-[0.95] tracking-tight">{family}</h1>
+        <p class="bar-sub mt-2 font-mono text-[10px] tracking-[0.22em] text-zinc-500 uppercase dark:text-zinc-400">
+          <span id="shown">{total}</span> <span class="text-zinc-300 dark:text-zinc-600">/</span> {total} glyphs
+        </p>
+      </div>
+      <div class="flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
+        <button type="button" data-theme-set="light" title="Light background"
+                class="theme-btn size-7 cursor-pointer rounded-full text-[13px] leading-none">☀</button>
+        <button type="button" data-theme-set="dark" title="Dark background"
+                class="theme-btn size-7 cursor-pointer rounded-full text-[13px] leading-none">☾</button>
+      </div>
     </div>
+
+    <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-3">
+      <label class="group relative flex min-w-56 flex-1 items-center">
+        <svg class="pointer-events-none absolute left-3 size-4 text-zinc-400" viewBox="0 0 20 20" fill="none"
+             stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <circle cx="9" cy="9" r="6"/><path d="m17 17-3.6-3.6" stroke-linecap="round"/>
+        </svg>
+        <input id="search" type="search" placeholder="Search icons…" autocomplete="off" autofocus
+               class="w-full rounded-full border border-zinc-200 bg-transparent py-2 pr-14 pl-9 text-sm
+                      placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none
+                      dark:border-zinc-800 dark:placeholder:text-zinc-500 dark:focus:border-zinc-600">
+        <kbd id="slash" class="pointer-events-none absolute right-3 rounded border border-zinc-200 px-1.5
+                               py-0.5 font-mono text-[10px] text-zinc-400 dark:border-zinc-800
+                               dark:text-zinc-500">/</kbd>
+      </label>
+
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase dark:text-zinc-500">Ink</span>
+        <div id="swatches" class="flex items-center gap-1.5">
+          <button type="button" data-colour="" title="Follow the page"
+                  class="swatch size-5 cursor-pointer rounded-full bg-zinc-900 ring-1 ring-black/10
+                         dark:bg-zinc-100 dark:ring-white/20"></button>
+{swatches}        </div>
+        <span class="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-800"></span>
+        <label class="picker-ring ring-1 ring-black/10 dark:ring-white/20" title="Choose any colour">
+          <input id="picker" type="color" value="#2563eb">
+        </label>
+        <span id="colour-note" class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"></span>
+      </div>
+    </div>
+
+    <div class="bar-sub mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase dark:text-zinc-500">Colour</span>
+        <div id="kinds" class="flex items-center gap-1">
+{kinds}        </div>
+      </div>
+{folders}    </div>
+
   </div>
-  <div class="flex w-full items-center gap-2">
-    <span class="text-xs text-zinc-500 dark:text-zinc-400">Colour</span>
-    <div id="swatches" class="flex flex-wrap items-center gap-1.5">
-      <button type="button" data-colour="" title="Follow the page"
-              class="swatch size-6 cursor-pointer rounded-full border border-zinc-300
-                     bg-zinc-900 dark:border-zinc-700 dark:bg-zinc-100"></button>
-{swatches}    </div>
-    <input id="picker" type="color" value="#2563eb" title="Pick any colour"
-           class="size-6 shrink-0 cursor-pointer rounded-full ring-1 ring-black/10
-                  dark:ring-white/15">
-    <span id="colour-note" class="text-xs text-zinc-400 dark:text-zinc-500"></span>
-  </div>
+  <div class="hairline"></div>
 </header>
 
-<main>
+<main class="pt-7">
 "##,
         family = family,
         css = escape(css_url),
         tailwind = TAILWIND_CDN,
         total = icons.len(),
+        kinds = kind_chips(icons),
+        folders = folder_chips(icons),
         swatches = SWATCHES
             .iter()
             .map(|colour| format!(
@@ -153,6 +212,83 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     ));
 
     page
+}
+
+/// The colour buckets a reader can filter by. The wording matches what the
+/// icon actually does on a page, not how it is compiled.
+const KINDS: [(&str, &str, &str); 3] = [
+    (
+        "foreground",
+        "Follows CSS",
+        "drawn entirely in currentColor",
+    ),
+    (
+        "single",
+        "One colour",
+        "drawn in one fixed colour, still follows CSS color",
+    ),
+    (
+        "multi",
+        "Multicolour",
+        "keeps its own colours, ignores CSS color",
+    ),
+];
+
+fn kind_chips(icons: &[Icon]) -> String {
+    let mut out = String::new();
+    for (key, label, title) in KINDS {
+        let count = icons.iter().filter(|i| kind_of(i) == key).count();
+        if count == 0 {
+            continue;
+        }
+        out.push_str(&format!(
+            "          <button type=\"button\" data-kind=\"{key}\" title=\"{title}\"\n\
+             \x20                   class=\"chip cursor-pointer rounded-full border border-zinc-200 px-2.5 \
+             py-1 font-mono text-[11px] text-zinc-500 dark:border-zinc-800 \
+             dark:text-zinc-400\">{label} <span class=\"text-zinc-300 dark:text-zinc-600\">{count}\
+             </span></button>\n"
+        ));
+    }
+    out
+}
+
+fn folder_chips(icons: &[Icon]) -> String {
+    let mut folders: Vec<&str> = icons.iter().filter_map(|i| i.group.as_deref()).collect();
+    folders.sort_unstable();
+    folders.dedup();
+    if folders.is_empty() {
+        return String::new();
+    }
+
+    let mut options = String::from("          <option value=\"\">All folders</option>\n");
+    for folder in folders {
+        let count = icons
+            .iter()
+            .filter(|i| i.group.as_deref() == Some(folder))
+            .count();
+        options.push_str(&format!(
+            "          <option value=\"{f}\">{f} ({count})</option>\n",
+            f = escape(folder)
+        ));
+    }
+
+    format!(
+        "      <div class=\"flex items-center gap-2\">\n\
+         \x20       <span class=\"font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase \
+         dark:text-zinc-500\">Folder</span>\n\
+         \x20       <select id=\"folder\" class=\"cursor-pointer rounded-full border border-zinc-200 \
+         bg-transparent py-1 pr-7 pl-2.5 font-mono text-[11px] text-zinc-500 focus:outline-none \
+         dark:border-zinc-800 dark:text-zinc-400\">\n{options}        </select>\n      </div>\n"
+    )
+}
+
+/// Which colour bucket an icon belongs to.
+fn kind_of(icon: &Icon) -> &'static str {
+    match icon.outline.colouring {
+        Colouring::Foreground => "foreground",
+        Colouring::Single { .. } => "single",
+        Colouring::Multi => "multi",
+    }
 }
 
 /// Split the icons into consecutive runs sharing a group, preserving order.
@@ -203,7 +339,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
         String::new()
     } else {
         r#"
-        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">fixed colour</code>"#
+        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">own colours</code>"#
             .to_string()
     };
     let width_note = if aspect >= 1.5 {
@@ -216,7 +352,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
     };
 
     format!(
-        r#"    <figure data-search="{search}" style="--aspect:{aspect:.3}"
+        r#"    <figure data-search="{search}" data-kind="{kind}" data-group="{group}" style="--aspect:{aspect:.3}"
             class="card m-0 flex flex-col items-center gap-3 rounded-xl border border-zinc-200
                    px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
       <span class="glyph {class} leading-none" aria-hidden="true"></span>
@@ -256,6 +392,8 @@ fn card(icon: &Icon, prefix: &str) -> String {
         aspect = aspect,
         width_note = width_note,
         colour_note = colour_note,
+        kind = kind_of(icon),
+        group = escape(icon.group.as_deref().unwrap_or_default()),
     )
 }
 
@@ -322,11 +460,31 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   }
   paintTheme();
 
-  search.addEventListener('input', () => {
+  // Search, colour bucket and folder all narrow the same list, so they are
+  // applied together rather than each owning its own pass.
+  const chips = Array.from(document.querySelectorAll('.chip'));
+  const folder = document.getElementById('folder');
+  let kind = '';
+
+  function paintChips() {
+    for (const chip of chips) {
+      const on = chip.dataset.kind === kind;
+      chip.classList.toggle('border-zinc-900', on);
+      chip.classList.toggle('text-zinc-900', on);
+      chip.classList.toggle('dark:border-zinc-100', on);
+      chip.classList.toggle('dark:text-zinc-100', on);
+    }
+  }
+
+  function applyFilters() {
     const query = search.value.trim().toLowerCase();
+    const wanted = folder ? folder.value : '';
     let visible = 0;
     for (const card of cards) {
-      const match = !query || card.dataset.search.includes(query);
+      const match =
+        (!query || card.dataset.search.includes(query)) &&
+        (!kind || card.dataset.kind === kind) &&
+        (!wanted || card.dataset.group === wanted);
       card.hidden = !match;
       card.classList.toggle('hidden', !match);
       if (match) visible++;
@@ -340,7 +498,42 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
     }
     shown.textContent = visible;
     empty.hidden = visible > 0;
+  }
+
+  search.addEventListener('input', applyFilters);
+  if (folder) folder.addEventListener('change', applyFilters);
+  for (const chip of chips) {
+    chip.addEventListener('click', () => {
+      // Clicking the active bucket clears it, so the chips act as a filter
+      // rather than a mode you cannot leave.
+      kind = kind === chip.dataset.kind ? '' : chip.dataset.kind;
+      paintChips();
+      applyFilters();
+    });
+  }
+  paintChips();
+
+  // A slash jumps to the search box; escape clears whatever is in it.
+  document.addEventListener('keydown', (event) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+    if (event.key === '/' && !typing) {
+      event.preventDefault();
+      search.focus();
+      search.select();
+    } else if (event.key === 'Escape' && document.activeElement === search) {
+      search.value = '';
+      applyFilters();
+    }
   });
+
+  // The bar only takes on the page background once it has actually stuck, so
+  // at rest it reads as part of the page rather than as floating chrome.
+  const sentinel = document.getElementById('sentinel');
+  const bar = document.getElementById('bar');
+  new IntersectionObserver(
+    ([entry]) => bar.toggleAttribute('data-stuck', !entry.isIntersecting),
+    { threshold: 1 }
+  ).observe(sentinel);
 
   let timer;
   document.addEventListener('click', async (event) => {
@@ -450,14 +643,14 @@ mod tests {
             paint: crate::svg::LayerPaint::Foreground,
         });
         let page = render(&[colourful], "Icons", "icon", "f.css");
-        assert!(page.contains("fixed colour"));
+        assert!(page.contains("own colours"));
         assert!(page.contains("colour color"));
     }
 
     #[test]
     fn plain_icons_are_not_marked_as_colour() {
         let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
-        assert!(!page.contains("fixed colour"));
+        assert!(!page.contains("own colours"));
     }
 
     #[test]
