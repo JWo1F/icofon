@@ -22,6 +22,21 @@ pub enum LayerPaint {
     Fixed { r: u8, g: u8, b: u8, a: u8 },
 }
 
+/// How an icon is coloured, which decides both how it is compiled and how it
+/// behaves on a page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Colouring {
+    /// Drawn entirely in `currentColor`. Follows the CSS `color` completely.
+    Foreground,
+    /// Drawn in one colour the artwork names. Still compiled as a plain glyph,
+    /// so it follows the CSS `color` too — the colour it was drawn in is not
+    /// kept, because a single colour carries no relationship worth pinning.
+    Single { r: u8, g: u8, b: u8 },
+    /// Uses two or more colours, so it is compiled as COLR layers and keeps
+    /// them. Only its `currentColor` layers follow the CSS `color`.
+    Multi,
+}
+
 /// One colour's worth of an icon. Layers are in paint order, bottom first.
 #[derive(Debug)]
 pub struct Layer {
@@ -41,9 +56,11 @@ pub struct Outline {
     pub problem: Option<Problem>,
     /// The icon split by colour, bottom layer first.
     ///
-    /// Empty when the icon is drawn entirely in `currentColor`, which needs no
-    /// colour table: `path` alone is the glyph and it follows the CSS `color`.
+    /// Empty unless `colouring` is [`Colouring::Multi`]: everything else is a
+    /// plain glyph that follows the CSS `color`.
     pub layers: Vec<Layer>,
+    /// How the artwork was coloured, so the preview can say so and filter on it.
+    pub colouring: Colouring,
 }
 
 /// A reason an SVG cannot become a glyph.
@@ -215,7 +232,12 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
     }
 
     let path = cubics_to_quads(&path);
-    let layers = build_layers(&drawn, scale);
+    let colouring = classify(&drawn);
+    let layers = if colouring == Colouring::Multi {
+        build_layers(&drawn, scale)
+    } else {
+        Vec::new()
+    };
     let problem = if found.raster {
         Some(Problem::RasterImage)
     } else if found.masked {
@@ -231,6 +253,7 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
         advance: (f64::from(size.width()) * scale).round().max(0.0) as u16,
         problem,
         layers,
+        colouring,
     })
 }
 
@@ -306,31 +329,38 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
     }
 }
 
-/// Split the artwork into one layer per run of shapes sharing a colour.
+/// Decide how an icon is coloured.
 ///
-/// Returns nothing unless the icon actually uses more than one colour, in which
-/// case it stays a plain glyph that follows the CSS `color`.
-///
-/// What colour buys is the *relationship* between colours, which flattening
-/// destroys: the white lettering on a dark badge, the three panels of a card
-/// logo. A single flat colour has no such relationship — pinning it would only
-/// take away the ability to recolour the icon, and an icon frozen in a mid grey
-/// disappears against a dark background.
-///
-/// Colour layers are built from the artwork as drawn. None of the paper rules
-/// apply here — with real colours available, white is white again and a wash is
-/// a wash, so a badge keeps its white panel instead of having it dropped.
-fn build_layers(drawn: &[Filled], scale: f64) -> Vec<Layer> {
+/// Colour is only worth keeping when there is more than one of it. What colour
+/// buys is the *relationship* between colours, which flattening destroys: the
+/// white lettering on a dark badge, the three panels of a card logo. A single
+/// flat colour has no such relationship — pinning it would only take away the
+/// ability to recolour the icon, and an icon frozen in a mid grey disappears
+/// against a dark background.
+fn classify(drawn: &[Filled]) -> Colouring {
     let mut seen: Vec<LayerPaint> = Vec::new();
     for filled in drawn {
         if !seen.contains(&filled.paint) {
             seen.push(filled.paint);
         }
     }
-    if seen.len() < 2 {
-        return Vec::new();
+    match seen.as_slice() {
+        [] | [LayerPaint::Foreground] => Colouring::Foreground,
+        [LayerPaint::Fixed { r, g, b, .. }] => Colouring::Single {
+            r: *r,
+            g: *g,
+            b: *b,
+        },
+        _ => Colouring::Multi,
     }
+}
 
+/// Split the artwork into one layer per run of shapes sharing a colour.
+///
+/// Colour layers are built from the artwork as drawn. None of the paper rules
+/// apply here — with real colours available, white is white again and a wash is
+/// a wash, so a badge keeps its white panel instead of having it dropped.
+fn build_layers(drawn: &[Filled], scale: f64) -> Vec<Layer> {
     let mut layers: Vec<Layer> = Vec::new();
     for filled in drawn {
         let mut piece = BezPath::new();
