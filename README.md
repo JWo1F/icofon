@@ -174,10 +174,20 @@ showing the glyph, its name, its CSS class and its codepoint. Search filters on
 all of those — type a name, a class, a hex code or a folder — and groups that
 lose all their icons collapse with them. Clicking a class name copies it.
 
-The header stays put while you scroll. Next to the search box, a light/dark
-switch previews the icons on both backgrounds, and a colour palette (plus a
-free-form picker) recolours them, which is the quickest way to see which icons
-follow your CSS `color` and which carry their own. Both choices are remembered.
+The header stays put while you scroll, shrinking to a compact bar once it
+sticks. It carries:
+
+- **Search** over name, class, codepoint and folder. `/` jumps to it, `Esc`
+  clears it.
+- **Ink** — a light/dark switch and a colour palette with a free-form picker, so
+  icons can be checked on both backgrounds and in any colour. Only the glyphs
+  recolour; the labels stay readable. Both choices are remembered.
+- **Colour** — filter by how an icon behaves: *Follows CSS* (drawn entirely in
+  `currentColor`), *One colour* (a single named colour, still recolourable), or
+  *Multicolour* (keeps its own colours and ignores your CSS).
+- **Folder** — narrow to one subfolder.
+
+The three filters combine, so "multicolour icons in `payment`" is two clicks.
 
 Icons are one em tall but may be many ems wide. Each card is told its icon's
 aspect ratio and scales the glyph down to fit, so a wordmark 16 times wider than
