@@ -225,7 +225,7 @@ const KINDS: [(&str, &str, &str); 3] = [
     (
         "single",
         "One colour",
-        "drawn in one fixed colour, still follows CSS color",
+        "drawn in a single named colour, and still follows CSS color",
     ),
     (
         "multi",
