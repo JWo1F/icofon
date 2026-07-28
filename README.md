@@ -180,11 +180,13 @@ sticks. It carries:
 - **Search** over name, class, codepoint and folder. `/` jumps to it, `Esc`
   clears it.
 - **Ink** — a light/dark switch and a colour palette with a free-form picker, so
-  icons can be checked on both backgrounds and in any colour. Only the glyphs
-  recolour; the labels stay readable. Both choices are remembered.
-- **Colour** — filter by how an icon behaves: *Follows CSS* (drawn entirely in
-  `currentColor`), *One colour* (a single named colour, still recolourable), or
-  *Multicolour* (keeps its own colours and ignores your CSS).
+  icons can be checked on both backgrounds and in any colour. The active colour
+  is always shown as a hex. Only the glyphs recolour; the labels stay readable.
+  Both choices are remembered.
+- **Colour** — filter by how an icon was drawn: *One colour* (a single named
+  colour), *Multicolour* (keeps its own colours and ignores your CSS), or
+  *Custom colour* (drawn with `currentColor`, so it takes whatever you set).
+  Only multicolour behaves differently on a page; the other two both recolour.
 - **Folder** — narrow to one subfolder.
 
 The three filters combine, so "multicolour icons in `payment`" is two clicks.
