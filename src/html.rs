@@ -56,11 +56,14 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
   #bar {{ transition: background-color .25s ease, box-shadow .25s ease; }}
   #bar .bar-pad {{ padding-top: 2.75rem; padding-bottom: 1.1rem; transition: padding .25s ease; }}
   #bar .bar-title {{ font-size: clamp(2rem, 5vw, 2.75rem); transition: font-size .25s ease; }}
-  #bar .bar-sub {{ max-height: 3rem; opacity: 1; transition: max-height .25s ease, opacity .2s ease; }}
+  /* Generous enough to hold the filter row when it wraps, and always clipped,
+     so the collapse cannot spill content across the hairline below it. */
+  #bar .bar-sub {{ max-height: 14rem; opacity: 1; overflow: hidden;
+                  transition: max-height .25s ease, opacity .2s ease; }}
   #bar[data-stuck] {{ background: color-mix(in srgb, var(--bar) 88%, transparent); backdrop-filter: saturate(1.4) blur(14px); }}
   #bar[data-stuck] .bar-pad {{ padding-top: .8rem; padding-bottom: .8rem; }}
   #bar[data-stuck] .bar-title {{ font-size: 1.2rem; }}
-  #bar[data-stuck] .bar-sub {{ max-height: 0; opacity: 0; overflow: hidden; }}
+  #bar[data-stuck] .bar-sub {{ max-height: 0; opacity: 0; }}
   /* A hairline that fades out at both ends, so the bar sits on the page
      instead of being boxed in by it. */
   .hairline {{ height: 1px; background: linear-gradient(90deg, transparent, var(--hair) 12%, var(--hair) 88%, transparent); }}
@@ -135,12 +138,9 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
                                dark:text-zinc-500">/</kbd>
       </label>
 
-      <div class="flex items-center gap-2">
+      <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
         <span class="font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase dark:text-zinc-500">Ink</span>
-        <div id="swatches" class="flex items-center gap-1.5">
-          <button type="button" data-colour="" title="Follow the page"
-                  class="swatch size-5 cursor-pointer rounded-full bg-zinc-900 ring-1 ring-black/10
-                         dark:bg-zinc-100 dark:ring-white/20"></button>
+        <div id="swatches" class="flex flex-wrap items-center gap-1.5">
 {swatches}        </div>
         <span class="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-800"></span>
         <label class="picker-ring ring-1 ring-black/10 dark:ring-white/20" title="Choose any colour">
@@ -214,23 +214,26 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     page
 }
 
-/// The colour buckets a reader can filter by. The wording matches what the
-/// icon actually does on a page, not how it is compiled.
+/// The colour buckets a reader can filter by.
+///
+/// These describe how an icon was *drawn*, not how it behaves, because two of
+/// them behave identically: both a `currentColor` icon and a one-colour icon
+/// compile to a plain glyph and recolour freely. Only multicolour is different.
 const KINDS: [(&str, &str, &str); 3] = [
-    (
-        "foreground",
-        "Follows CSS",
-        "drawn entirely in currentColor",
-    ),
     (
         "single",
         "One colour",
-        "drawn in a single named colour, and still follows CSS color",
+        "drawn in a single named colour — CSS color still recolours it",
     ),
     (
         "multi",
         "Multicolour",
-        "keeps its own colours, ignores CSS color",
+        "keeps the colours it was drawn in, and ignores CSS color",
+    ),
+    (
+        "foreground",
+        "Custom colour",
+        "drawn with currentColor, so it takes whatever colour you set",
     ),
 ];
 
@@ -397,11 +400,12 @@ fn card(icon: &Icon, prefix: &str) -> String {
     )
 }
 
-/// Preset colours for the preview. Enough to check an icon against a light and
-/// a dark foreground and a few brand-ish hues, without turning into a palette
-/// editor.
-const SWATCHES: [&str; 7] = [
-    "#71717a", "#2563eb", "#0d9488", "#16a34a", "#ca8a04", "#dc2626", "#9333ea",
+/// Preset colours for the preview. Black and white first, since checking an
+/// icon against each background is the common case, then a few hues. Not a
+/// palette editor — the picker beside them covers anything else.
+const SWATCHES: [&str; 9] = [
+    "#000000", "#ffffff", "#71717a", "#2563eb", "#0d9488", "#16a34a", "#ca8a04", "#dc2626",
+    "#9333ea",
 ];
 
 const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.card'));
@@ -419,19 +423,25 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   const picker = document.getElementById('picker');
   const colourNote = document.getElementById('colour-note');
 
+  const BLACK = '#000000';
+  const WHITE = '#ffffff';
+  let ink = BLACK;
+
   function applyColour(colour) {
-    grid.style.setProperty('--icon-colour', colour || 'inherit');
-    colourNote.textContent = colour || '';
+    ink = (colour || BLACK).toLowerCase();
+    grid.style.setProperty('--icon-colour', ink);
+    colourNote.textContent = ink;
+    picker.value = ink;
     for (const swatch of swatches) {
-      const on = (swatch.dataset.colour || '') === (colour || '');
+      const on = swatch.dataset.colour.toLowerCase() === ink;
       swatch.classList.toggle('ring-2', on);
       swatch.classList.toggle('ring-blue-500', on);
       swatch.classList.toggle('ring-offset-1', on);
     }
-    try { localStorage.setItem('icofon-colour', colour || ''); } catch {}
+    try { localStorage.setItem('icofon-colour', ink); } catch {}
   }
   for (const swatch of swatches) {
-    swatch.addEventListener('click', () => applyColour(swatch.dataset.colour || ''));
+    swatch.addEventListener('click', () => applyColour(swatch.dataset.colour));
   }
   picker.addEventListener('input', () => applyColour(picker.value));
   let storedColour = '';
@@ -455,6 +465,10 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
       const theme = button.dataset.themeSet;
       document.documentElement.dataset.theme = theme;
       try { localStorage.setItem('icofon-theme', theme); } catch {}
+      // Plain black on a black page is invisible, so the two extremes follow
+      // the background. Any other colour is left exactly as chosen.
+      if (theme === 'dark' && ink === BLACK) applyColour(WHITE);
+      if (theme === 'light' && ink === WHITE) applyColour(BLACK);
       paintTheme();
     });
   }
@@ -630,8 +644,12 @@ mod tests {
                 "{swatch}"
             );
         }
-        // Plus "follow the page" and a free-form picker.
-        assert!(page.contains(r#"data-colour="""#));
+        // Black and white lead, so both backgrounds are one click away.
+        assert!(page.contains(r##"data-colour="#000000""##));
+        assert!(page.contains(r##"data-colour="#ffffff""##));
+        // Every swatch is a real colour: there is no "inherit" option to leave
+        // the readout blank.
+        assert!(!page.contains(r#"data-colour="""#));
         assert!(page.contains(r#"id="picker" type="color""#));
     }
 
