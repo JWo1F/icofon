@@ -1,7 +1,7 @@
 //! A browsable preview page listing every icon in the generated font.
 
 use crate::font::Icon;
-use crate::svg::Colouring;
+use crate::svg::Coloring;
 
 /// Tailwind's browser build compiles utility classes at runtime, so the preview
 /// page needs no build step of its own.
@@ -47,8 +47,8 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
   .card {{ container-type: inline-size; }}
   .glyph {{
     font-size: min(2.25rem, calc((100cqw - 1.5rem) / var(--aspect, 1)));
-    /* Only the glyphs follow the colour picker; labels stay readable. */
-    color: var(--icon-colour, inherit);
+    /* Only the glyphs follow the color picker; labels stay readable. */
+    color: var(--icon-color, inherit);
   }}
 
   /* The bar carries the page background only once it is actually stuck, so at
@@ -68,8 +68,8 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
      instead of being boxed in by it. */
   .hairline {{ height: 1px; background: linear-gradient(90deg, transparent, var(--hair) 12%, var(--hair) 88%, transparent); }}
 
-  /* A colour input is a bordered square by default. It is made round, and then
-     ringed in spectrum so it reads as "choose any colour" rather than as one
+  /* A color input is a bordered square by default. It is made round, and then
+     ringed in spectrum so it reads as "choose any color" rather than as one
      more preset to pick from. */
   #picker {{
     -webkit-appearance: none; appearance: none;
@@ -143,16 +143,16 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
         <div id="swatches" class="flex flex-wrap items-center gap-1.5">
 {swatches}        </div>
         <span class="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-800"></span>
-        <label class="picker-ring ring-1 ring-black/10 dark:ring-white/20" title="Choose any colour">
+        <label class="picker-ring ring-1 ring-black/10 dark:ring-white/20" title="Choose any color">
           <input id="picker" type="color" value="#2563eb">
         </label>
-        <span id="colour-note" class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"></span>
+        <span id="color-note" class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"></span>
       </div>
     </div>
 
     <div class="bar-sub mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
       <div class="flex items-center gap-2">
-        <span class="font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase dark:text-zinc-500">Colour</span>
+        <span class="font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase dark:text-zinc-500">Color</span>
         <div id="kinds" class="flex items-center gap-1">
 {kinds}        </div>
       </div>
@@ -172,10 +172,10 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
         folders = folder_chips(icons),
         swatches = SWATCHES
             .iter()
-            .map(|colour| format!(
-                "      <button type=\"button\" data-colour=\"{colour}\" title=\"{colour}\"\n\
+            .map(|color| format!(
+                "      <button type=\"button\" data-color=\"{color}\" title=\"{color}\"\n\
                  \x20             class=\"swatch size-6 cursor-pointer rounded-full border \
-                 border-black/10 dark:border-white/15\" style=\"background:{colour}\"></button>\n"
+                 border-black/10 dark:border-white/15\" style=\"background:{color}\"></button>\n"
             ))
             .collect::<String>(),
     ));
@@ -214,26 +214,26 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     page
 }
 
-/// The colour buckets a reader can filter by.
+/// The color buckets a reader can filter by.
 ///
 /// These describe how an icon was *drawn*, not how it behaves, because two of
-/// them behave identically: both a `currentColor` icon and a one-colour icon
-/// compile to a plain glyph and recolour freely. Only multicolour is different.
+/// them behave identically: both a `currentColor` icon and a one-color icon
+/// compile to a plain glyph and recolor freely. Only multicolor is different.
 const KINDS: [(&str, &str, &str); 3] = [
     (
         "single",
-        "One colour",
-        "drawn in a single named colour — CSS color still recolours it",
+        "One color",
+        "drawn in a single named color — CSS color still recolors it",
     ),
     (
         "multi",
-        "Multicolour",
-        "keeps the colours it was drawn in, and ignores CSS color",
+        "Multicolor",
+        "keeps the colors it was drawn in, and ignores CSS color",
     ),
     (
         "foreground",
-        "Custom colour",
-        "drawn with currentColor, so it takes whatever colour you set",
+        "Custom color",
+        "drawn with currentColor, so it takes whatever color you set",
     ),
 ];
 
@@ -285,12 +285,12 @@ fn folder_chips(icons: &[Icon]) -> String {
     )
 }
 
-/// Which colour bucket an icon belongs to.
+/// Which color bucket an icon belongs to.
 fn kind_of(icon: &Icon) -> &'static str {
-    match icon.outline.colouring {
-        Colouring::Foreground => "foreground",
-        Colouring::Single { .. } => "single",
-        Colouring::Multi => "multi",
+    match icon.outline.coloring {
+        Coloring::Foreground => "foreground",
+        Coloring::Single { .. } => "single",
+        Coloring::Multi => "multi",
     }
 }
 
@@ -336,13 +336,13 @@ fn card(icon: &Icon, prefix: &str) -> String {
     // How many ems wide the glyph is. A wide icon would otherwise run straight
     // out of its card, so the stylesheet divides the display size by this.
     let aspect = f64::from(icon.outline.advance) / f64::from(crate::font::UNITS_PER_EM);
-    // A colour icon paints its own colours, so it will not follow the CSS
+    // A color icon paints its own colors, so it will not follow the CSS
     // `color` the way the rest do. Worth saying on the card.
-    let colour_note = if icon.outline.layers.is_empty() {
+    let color_note = if icon.outline.layers.is_empty() {
         String::new()
     } else {
         r#"
-        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">own colours</code>"#
+        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">own colors</code>"#
             .to_string()
     };
     let width_note = if aspect >= 1.5 {
@@ -360,7 +360,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
                    px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
       <span class="glyph {class} leading-none" aria-hidden="true"></span>
       <figcaption class="flex w-full flex-col items-center gap-1">
-        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>{width_note}{colour_note}
+        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>{width_note}{color_note}
         <button type="button" data-copy="{class}" title="Copy class name"
                 class="name max-w-full cursor-pointer rounded-md px-1.5 py-0.5 font-mono text-[12px]
                        break-all text-zinc-500 hover:bg-blue-600/10 hover:text-blue-700
@@ -380,7 +380,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
                 if icon.outline.layers.is_empty() {
                     ""
                 } else {
-                    "colour color"
+                    "color color"
                 },
             ]
             .iter()
@@ -394,13 +394,13 @@ fn card(icon: &Icon, prefix: &str) -> String {
         code = code,
         aspect = aspect,
         width_note = width_note,
-        colour_note = colour_note,
+        color_note = color_note,
         kind = kind_of(icon),
         group = escape(icon.group.as_deref().unwrap_or_default()),
     )
 }
 
-/// Preset colours for the preview. Black and white first, since checking an
+/// Preset colors for the preview. Black and white first, since checking an
 /// icon against each background is the common case, then a few hues. Not a
 /// palette editor — the picker beside them covers anything else.
 const SWATCHES: [&str; 9] = [
@@ -417,36 +417,36 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
 
   // The picker sets a custom property on <main> that only .glyph reads, so the
   // icons follow it while the card text stays readable. Icons drawn with
-  // currentColor pick it up; COLR icons keep the colours baked into the font.
+  // currentColor pick it up; COLR icons keep the colors baked into the font.
   const grid = document.querySelector('main');
   const swatches = Array.from(document.querySelectorAll('.swatch'));
   const picker = document.getElementById('picker');
-  const colourNote = document.getElementById('colour-note');
+  const colorNote = document.getElementById('color-note');
 
   const BLACK = '#000000';
   const WHITE = '#ffffff';
   let ink = BLACK;
 
-  function applyColour(colour) {
-    ink = (colour || BLACK).toLowerCase();
-    grid.style.setProperty('--icon-colour', ink);
-    colourNote.textContent = ink;
+  function applyColor(color) {
+    ink = (color || BLACK).toLowerCase();
+    grid.style.setProperty('--icon-color', ink);
+    colorNote.textContent = ink;
     picker.value = ink;
     for (const swatch of swatches) {
-      const on = swatch.dataset.colour.toLowerCase() === ink;
+      const on = swatch.dataset.color.toLowerCase() === ink;
       swatch.classList.toggle('ring-2', on);
       swatch.classList.toggle('ring-blue-500', on);
       swatch.classList.toggle('ring-offset-1', on);
     }
-    try { localStorage.setItem('icofon-colour', ink); } catch {}
+    try { localStorage.setItem('icofon-color', ink); } catch {}
   }
   for (const swatch of swatches) {
-    swatch.addEventListener('click', () => applyColour(swatch.dataset.colour));
+    swatch.addEventListener('click', () => applyColor(swatch.dataset.color));
   }
-  picker.addEventListener('input', () => applyColour(picker.value));
-  let storedColour = '';
-  try { storedColour = localStorage.getItem('icofon-colour') || ''; } catch {}
-  applyColour(storedColour);
+  picker.addEventListener('input', () => applyColor(picker.value));
+  let storedColor = '';
+  try { storedColor = localStorage.getItem('icofon-color') || ''; } catch {}
+  applyColor(storedColor);
 
   const themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
   function paintTheme() {
@@ -466,15 +466,15 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
       document.documentElement.dataset.theme = theme;
       try { localStorage.setItem('icofon-theme', theme); } catch {}
       // Plain black on a black page is invisible, so the two extremes follow
-      // the background. Any other colour is left exactly as chosen.
-      if (theme === 'dark' && ink === BLACK) applyColour(WHITE);
-      if (theme === 'light' && ink === WHITE) applyColour(BLACK);
+      // the background. Any other color is left exactly as chosen.
+      if (theme === 'dark' && ink === BLACK) applyColor(WHITE);
+      if (theme === 'light' && ink === WHITE) applyColor(BLACK);
       paintTheme();
     });
   }
   paintTheme();
 
-  // Search, colour bucket and folder all narrow the same list, so they are
+  // Search, color bucket and folder all narrow the same list, so they are
   // applied together rather than each owning its own pass.
   const chips = Array.from(document.querySelectorAll('.chip'));
   const folder = document.getElementById('folder');
@@ -636,39 +636,39 @@ mod tests {
     }
 
     #[test]
-    fn the_header_offers_a_colour_palette() {
+    fn the_header_offers_a_color_palette() {
         let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
         for swatch in SWATCHES {
             assert!(
-                page.contains(&format!(r#"data-colour="{swatch}""#)),
+                page.contains(&format!(r#"data-color="{swatch}""#)),
                 "{swatch}"
             );
         }
         // Black and white lead, so both backgrounds are one click away.
-        assert!(page.contains(r##"data-colour="#000000""##));
-        assert!(page.contains(r##"data-colour="#ffffff""##));
-        // Every swatch is a real colour: there is no "inherit" option to leave
+        assert!(page.contains(r##"data-color="#000000""##));
+        assert!(page.contains(r##"data-color="#ffffff""##));
+        // Every swatch is a real color: there is no "inherit" option to leave
         // the readout blank.
-        assert!(!page.contains(r#"data-colour="""#));
+        assert!(!page.contains(r#"data-color="""#));
         assert!(page.contains(r#"id="picker" type="color""#));
     }
 
     #[test]
-    fn colour_icons_are_marked_and_searchable() {
-        let mut colourful = icon("brand", '\u{e900}');
-        colourful.outline.layers.push(crate::svg::Layer {
+    fn color_icons_are_marked_and_searchable() {
+        let mut colorful = icon("brand", '\u{e900}');
+        colorful.outline.layers.push(crate::svg::Layer {
             path: kurbo::BezPath::new(),
             paint: crate::svg::LayerPaint::Foreground,
         });
-        let page = render(&[colourful], "Icons", "icon", "f.css");
-        assert!(page.contains("own colours"));
-        assert!(page.contains("colour color"));
+        let page = render(&[colorful], "Icons", "icon", "f.css");
+        assert!(page.contains("own colors"));
+        assert!(page.contains("color color"));
     }
 
     #[test]
-    fn plain_icons_are_not_marked_as_colour() {
+    fn plain_icons_are_not_marked_as_color() {
         let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
-        assert!(!page.contains("own colours"));
+        assert!(!page.contains("own colors"));
     }
 
     #[test]
@@ -721,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn subfolders_become_labelled_sections() {
+    fn subfolders_become_labeled_sections() {
         let icons = vec![
             icon("loose", '\u{e900}'),
             grouped("left", '\u{e901}', Some("arrows")),
@@ -730,7 +730,7 @@ mod tests {
         ];
         let page = render(&icons, "Icons", "icon", "f.css");
 
-        // One section per group, plus the unlabelled one for top-level icons.
+        // One section per group, plus the unlabeled one for top-level icons.
         assert_eq!(page.matches("<section").count(), 3);
         assert!(page.contains(r#"data-group="arrows""#));
         assert!(page.contains(r#"data-group="social""#));
@@ -742,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_folder_still_renders_one_unlabelled_section() {
+    fn a_flat_folder_still_renders_one_unlabeled_section() {
         let page = render(&[icon("only", '\u{e900}')], "Icons", "icon", "f.css");
         assert_eq!(page.matches("<section").count(), 1);
         assert!(!page.contains("<h2"));

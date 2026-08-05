@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_codepoints_are_recognised() {
+    fn explicit_codepoints_are_recognized() {
         assert_eq!(
             split_codepoint("uE901-heart"),
             (Some('\u{e901}'), "heart".to_string())

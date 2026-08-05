@@ -12,32 +12,32 @@ use crate::font::{ASCENDER, UNITS_PER_EM};
 /// units. A thousandth of the em is far below what any rasterizer can show.
 const CUBIC_TO_QUAD_ACCURACY: f64 = 0.2;
 
-/// The colour a layer is drawn in.
+/// The color a layer is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LayerPaint {
     /// Drawn with `currentColor`, so it follows the CSS `color` of whatever the
-    /// icon sits in — the same behaviour a plain monochrome glyph has.
+    /// icon sits in — the same behavior a plain monochrome glyph has.
     Foreground,
-    /// Drawn in a colour the artwork names, which is kept as drawn.
+    /// Drawn in a color the artwork names, which is kept as drawn.
     Fixed { r: u8, g: u8, b: u8, a: u8 },
 }
 
-/// How an icon is coloured, which decides both how it is compiled and how it
+/// How an icon is colored, which decides both how it is compiled and how it
 /// behaves on a page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Colouring {
+pub enum Coloring {
     /// Drawn entirely in `currentColor`. Follows the CSS `color` completely.
     Foreground,
-    /// Drawn in one colour the artwork names. Still compiled as a plain glyph,
-    /// so it follows the CSS `color` too — the colour it was drawn in is not
-    /// kept, because a single colour carries no relationship worth pinning.
+    /// Drawn in one color the artwork names. Still compiled as a plain glyph,
+    /// so it follows the CSS `color` too — the color it was drawn in is not
+    /// kept, because a single color carries no relationship worth pinning.
     Single { r: u8, g: u8, b: u8 },
-    /// Uses two or more colours, so it is compiled as COLR layers and keeps
+    /// Uses two or more colors, so it is compiled as COLR layers and keeps
     /// them. Only its `currentColor` layers follow the CSS `color`.
     Multi,
 }
 
-/// One colour's worth of an icon. Layers are in paint order, bottom first.
+/// One color's worth of an icon. Layers are in paint order, bottom first.
 #[derive(Debug)]
 pub struct Layer {
     pub path: BezPath,
@@ -54,13 +54,13 @@ pub struct Outline {
     /// Set when the SVG cannot be faithfully turned into a glyph, so the caller
     /// can report it instead of shipping a blank or blacked-out icon.
     pub problem: Option<Problem>,
-    /// The icon split by colour, bottom layer first.
+    /// The icon split by color, bottom layer first.
     ///
-    /// Empty unless `colouring` is [`Colouring::Multi`]: everything else is a
+    /// Empty unless `coloring` is [`Coloring::Multi`]: everything else is a
     /// plain glyph that follows the CSS `color`.
     pub layers: Vec<Layer>,
-    /// How the artwork was coloured, so the preview can say so and filter on it.
-    pub colouring: Colouring,
+    /// How the artwork was colored, so the preview can say so and filter on it.
+    pub coloring: Coloring,
 }
 
 /// A reason an SVG cannot become a glyph.
@@ -106,7 +106,7 @@ pub fn load(file: &Path) -> Result<Outline> {
     parse(&data, &file.display().to_string())
 }
 
-/// A colour no icon would choose, used to mark `currentColor` so it can still
+/// A color no icon would choose, used to mark `currentColor` so it can still
 /// be told apart after usvg resolves it to a concrete value.
 const FOREGROUND_SENTINEL: usvg::Color = usvg::Color {
     red: 0x01,
@@ -122,7 +122,7 @@ const FOREGROUND_SENTINEL: usvg::Color = usvg::Color {
 /// `color` and the other staying as drawn.
 ///
 /// An `svg` element that already sets `color` is left alone: there
-/// `currentColor` names a colour the artwork chose, which is not the foreground.
+/// `currentColor` names a color the artwork chose, which is not the foreground.
 fn mark_current_color(data: Vec<u8>) -> Vec<u8> {
     let Some(open) = find(&data, b"<svg") else {
         return data;
@@ -232,8 +232,8 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
     }
 
     let path = cubics_to_quads(&path);
-    let colouring = classify(&drawn);
-    let layers = if colouring == Colouring::Multi {
+    let coloring = classify(&drawn);
+    let layers = if coloring == Coloring::Multi {
         build_layers(&drawn, scale)
     } else {
         Vec::new()
@@ -253,7 +253,7 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
         advance: (f64::from(size.width()) * scale).round().max(0.0) as u16,
         problem,
         layers,
-        colouring,
+        coloring,
     })
 }
 
@@ -262,7 +262,7 @@ struct Filled {
     path: tiny_skia_path::Path,
     even_odd: bool,
     /// Paper shapes are not ink; what they mean depends on what is under them.
-    /// Only the flattened outline cares — a colour layer keeps its own colour.
+    /// Only the flattened outline cares — a color layer keeps its own color.
     background: bool,
     paint: LayerPaint,
 }
@@ -329,15 +329,15 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
     }
 }
 
-/// Decide how an icon is coloured.
+/// Decide how an icon is colored.
 ///
-/// Colour is only worth keeping when there is more than one of it. What colour
-/// buys is the *relationship* between colours, which flattening destroys: the
+/// Color is only worth keeping when there is more than one of it. What color
+/// buys is the *relationship* between colors, which flattening destroys: the
 /// white lettering on a dark badge, the three panels of a card logo. A single
-/// flat colour has no such relationship — pinning it would only take away the
-/// ability to recolour the icon, and an icon frozen in a mid grey disappears
+/// flat color has no such relationship — pinning it would only take away the
+/// ability to recolor the icon, and an icon frozen in a mid gray disappears
 /// against a dark background.
-fn classify(drawn: &[Filled]) -> Colouring {
+fn classify(drawn: &[Filled]) -> Coloring {
     let mut seen: Vec<LayerPaint> = Vec::new();
     for filled in drawn {
         if !seen.contains(&filled.paint) {
@@ -345,20 +345,20 @@ fn classify(drawn: &[Filled]) -> Colouring {
         }
     }
     match seen.as_slice() {
-        [] | [LayerPaint::Foreground] => Colouring::Foreground,
-        [LayerPaint::Fixed { r, g, b, .. }] => Colouring::Single {
+        [] | [LayerPaint::Foreground] => Coloring::Foreground,
+        [LayerPaint::Fixed { r, g, b, .. }] => Coloring::Single {
             r: *r,
             g: *g,
             b: *b,
         },
-        _ => Colouring::Multi,
+        _ => Coloring::Multi,
     }
 }
 
-/// Split the artwork into one layer per run of shapes sharing a colour.
+/// Split the artwork into one layer per run of shapes sharing a color.
 ///
-/// Colour layers are built from the artwork as drawn. None of the paper rules
-/// apply here — with real colours available, white is white again and a wash is
+/// Color layers are built from the artwork as drawn. None of the paper rules
+/// apply here — with real colors available, white is white again and a wash is
 /// a wash, so a badge keeps its white panel instead of having it dropped.
 fn build_layers(drawn: &[Filled], scale: f64) -> Vec<Layer> {
     let mut layers: Vec<Layer> = Vec::new();
@@ -373,7 +373,7 @@ fn build_layers(drawn: &[Filled], scale: f64) -> Vec<Layer> {
             continue;
         }
 
-        // Consecutive shapes of one colour are a single layer.
+        // Consecutive shapes of one color are a single layer.
         match layers.last_mut() {
             Some(last) if last.paint == filled.paint => last.path.extend(piece),
             _ => layers.push(Layer {
@@ -419,10 +419,10 @@ fn knocked_out_of(white: &BezPath, ink: &BezPath) -> Option<BezPath> {
     })
 }
 
-/// The colour a shape contributes to the colour table.
+/// The color a shape contributes to the color table.
 ///
-/// A gradient is reduced to its first stop: a glyph layer is one flat colour, so
-/// the choice is which single colour best stands for the ramp, and the colour it
+/// A gradient is reduced to its first stop: a glyph layer is one flat color, so
+/// the choice is which single color best stands for the ramp, and the color it
 /// starts from is the most predictable answer.
 fn layer_paint(paint: &usvg::Paint, alpha: f32) -> LayerPaint {
     let opaque = |color: usvg::Color| LayerPaint::Fixed {
@@ -448,7 +448,7 @@ fn layer_paint(paint: &usvg::Paint, alpha: f32) -> LayerPaint {
 
 /// Whether a paint reads as paper rather than ink.
 ///
-/// A glyph is ink or nothing — it has neither colour nor opacity — so two kinds
+/// A glyph is ink or nothing — it has neither color nor opacity — so two kinds
 /// of paint cannot be drawn as themselves:
 ///
 /// * **White**, which would put ink exactly where the artwork wanted none. A
@@ -683,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn shapes_and_transforms_are_honoured() {
+    fn shapes_and_transforms_are_honored() {
         let o = outline(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                  <g transform="translate(12 0)"><circle cx="6" cy="12" r="6" fill="#000"/></g>
@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn even_odd_holes_survive_as_non_zero() {
         let o = outline(EVEN_ODD_RING);
-        // The em centre corresponds to the middle of the viewBox.
+        // The em center corresponds to the middle of the viewBox.
         assert!(
             !o.path.contains(Point::new(500.0, 300.0)),
             "the hole should be empty under non-zero winding"
@@ -847,8 +847,8 @@ mod tests {
     }
 
     #[test]
-    fn a_single_colour_icon_stays_a_recolourable_symbol() {
-        // One flat colour has no relationship for colour to preserve, and
+    fn a_single_color_icon_stays_a_recolorable_symbol() {
+        // One flat color has no relationship for color to preserve, and
         // pinning it would stop the icon following the CSS `color`.
         let o = outline(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn two_colours_become_layers_in_paint_order() {
+    fn two_colors_become_layers_in_paint_order() {
         let o = outline(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                   <path d="M0 0h24v24H0Z" fill="#FF4F00"/>
@@ -899,8 +899,8 @@ mod tests {
     }
 
     #[test]
-    fn current_color_survives_beside_a_fixed_colour() {
-        // The tick follows the CSS colour while the disc stays blue.
+    fn current_color_survives_beside_a_fixed_color() {
+        // The tick follows the CSS color while the disc stays blue.
         let o = outline(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                   <circle cx="12" cy="12" r="10" fill="#0781B5"/>
@@ -924,8 +924,8 @@ mod tests {
 
     #[test]
     fn an_svg_that_sets_its_own_color_keeps_it() {
-        // Here `currentColor` names a colour the artwork chose, so it is not
-        // the foreground and the icon is a two-colour one.
+        // Here `currentColor` names a color the artwork chose, so it is not
+        // the foreground and the icon is a two-color one.
         let o = outline(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" color="#FF0000">
                   <path d="M0 0h24v24H0Z" fill="currentColor"/>
@@ -953,8 +953,8 @@ mod tests {
     }
 
     #[test]
-    fn the_flattened_outline_is_still_built_for_a_colour_icon() {
-        // COLR needs a base glyph for renderers without colour support.
+    fn the_flattened_outline_is_still_built_for_a_color_icon() {
+        // COLR needs a base glyph for renderers without color support.
         let o = outline(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                   <path d="M0 0h24v24H0Z" fill="#FF4F00"/>

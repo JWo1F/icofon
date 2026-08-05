@@ -71,7 +71,7 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
     glyf.add_glyph(&Glyph::Empty)
         .context("adding the .notdef glyph")?;
 
-    let mut colour = ColourTables::default();
+    let mut color = ColorTables::default();
     // Layer glyphs are appended after every base glyph, so their ids start past
     // .notdef and the icons.
     let mut next_layer_gid = 1 + icons.len();
@@ -107,9 +107,9 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
         let base_gid = index + 1;
         mappings.push((icon.codepoint, GlyphId::new(base_gid as u32)));
 
-        // A colour icon also gets one glyph per layer, referenced from COLR.
+        // A color icon also gets one glyph per layer, referenced from COLR.
         // The base glyph above stays as the flattened outline, which is what a
-        // renderer without colour support falls back to.
+        // renderer without color support falls back to.
         let mut layers = Vec::new();
         for layer in &icon.outline.layers {
             let Ok(glyph) = SimpleGlyph::from_bezpath(&layer.path) else {
@@ -129,12 +129,12 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
             layer_glyphs.push((glyph, icon.outline.advance));
             next_layer_gid += 1;
         }
-        colour.add(base_gid, &layers, &icon.name)?;
+        color.add(base_gid, &layers, &icon.name)?;
     }
 
     for (glyph, advance) in layer_glyphs {
         let side_bearing = glyph.bbox.x_min;
-        glyf.add_glyph(&glyph).context("compiling a colour layer")?;
+        glyf.add_glyph(&glyph).context("compiling a color layer")?;
         metrics.push(LongMetric::new(advance, side_bearing));
     }
 
@@ -243,46 +243,46 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
     builder.add_table(&glyf)?;
     builder.add_table(&name_table(family))?;
     builder.add_table(&post)?;
-    if let Some((colr, cpal)) = colour.build() {
+    if let Some((colr, cpal)) = color.build() {
         builder.add_table(&colr)?;
         builder.add_table(&cpal)?;
     }
     Ok(builder.build())
 }
 
-/// Accumulates the COLR and CPAL tables as colour icons are compiled.
+/// Accumulates the COLR and CPAL tables as color icons are compiled.
 ///
-/// COLR maps a base glyph to a run of layers, each naming a glyph and a colour
+/// COLR maps a base glyph to a run of layers, each naming a glyph and a color
 /// from the CPAL palette. The reserved palette index 0xFFFF means "the text
-/// colour", which is how a `currentColor` layer keeps following CSS `color`
-/// while its neighbours stay the colour the artwork chose.
+/// color", which is how a `currentColor` layer keeps following CSS `color`
+/// while its neighbors stay the color the artwork chose.
 #[derive(Default)]
-struct ColourTables {
+struct ColorTables {
     base_glyphs: Vec<BaseGlyph>,
     layers: Vec<ColrLayer>,
-    /// Distinct fixed colours, in the order first seen; the index into this is
+    /// Distinct fixed colors, in the order first seen; the index into this is
     /// the CPAL palette index.
     palette: Vec<(u8, u8, u8, u8)>,
 }
 
-/// The palette index OpenType reserves for the current text colour.
+/// The palette index OpenType reserves for the current text color.
 const FOREGROUND_PALETTE_INDEX: u16 = 0xFFFF;
 
-impl ColourTables {
+impl ColorTables {
     fn add(&mut self, base_gid: usize, layers: &[(usize, LayerPaint)], name: &str) -> Result<()> {
         if layers.is_empty() {
             return Ok(());
         }
 
         let first = u16::try_from(self.layers.len())
-            .with_context(|| format!("too many colour layers by the time '{name}' was reached"))?;
+            .with_context(|| format!("too many color layers by the time '{name}' was reached"))?;
         let count = u16::try_from(layers.len())
-            .with_context(|| format!("'{name}' has too many colour layers"))?;
+            .with_context(|| format!("'{name}' has too many color layers"))?;
 
         for (gid, paint) in layers {
             let palette_index = match paint {
                 LayerPaint::Foreground => FOREGROUND_PALETTE_INDEX,
-                LayerPaint::Fixed { r, g, b, a } => self.colour_index((*r, *g, *b, *a), name)?,
+                LayerPaint::Fixed { r, g, b, a } => self.color_index((*r, *g, *b, *a), name)?,
             };
             self.layers
                 .push(ColrLayer::new(small_gid(*gid, name)?, palette_index));
@@ -293,17 +293,17 @@ impl ColourTables {
         Ok(())
     }
 
-    fn colour_index(&mut self, colour: (u8, u8, u8, u8), name: &str) -> Result<u16> {
-        if let Some(at) = self.palette.iter().position(|entry| *entry == colour) {
+    fn color_index(&mut self, color: (u8, u8, u8, u8), name: &str) -> Result<u16> {
+        if let Some(at) = self.palette.iter().position(|entry| *entry == color) {
             return Ok(at as u16);
         }
         let at = u16::try_from(self.palette.len())
-            .with_context(|| format!("more than 65535 colours by the time '{name}' was reached"))?;
-        // 0xFFFF is reserved for the text colour, so it cannot also be a slot.
+            .with_context(|| format!("more than 65535 colors by the time '{name}' was reached"))?;
+        // 0xFFFF is reserved for the text color, so it cannot also be a slot.
         if at == FOREGROUND_PALETTE_INDEX {
             bail!("the palette is full");
         }
-        self.palette.push(colour);
+        self.palette.push(color);
         Ok(at)
     }
 
@@ -315,7 +315,7 @@ impl ColourTables {
         let entries = self.palette.len().max(1) as u16;
         let records = if self.palette.is_empty() {
             // A palette must have at least one entry even when every layer
-            // follows the text colour.
+            // follows the text color.
             vec![ColorRecord::new(0, 0, 0, 255)]
         } else {
             self.palette
@@ -474,37 +474,37 @@ mod tests {
     }
 
     #[test]
-    fn a_colour_icon_gets_colr_and_cpal() {
-        let colourful = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+    fn a_color_icon_gets_colr_and_cpal() {
+        let colorful = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                               <path d="M0 0h24v24H0Z" fill="#FF4F00"/>
                               <path d="M6 6h12v12H6Z" fill="#FFFFFF"/>
                             </svg>"##;
         let icons = vec![
             icon("plain", '\u{e900}', &square("8")),
-            icon("brand", '\u{e901}', colourful),
+            icon("brand", '\u{e901}', colorful),
         ];
         let bytes = build(&icons, "Test Icons").unwrap();
         let font = FontRef::new(&bytes).unwrap();
 
-        // .notdef, two base glyphs, and two layer glyphs for the colour icon.
+        // .notdef, two base glyphs, and two layer glyphs for the color icon.
         assert_eq!(font.maxp().unwrap().num_glyphs(), 5);
 
-        let colr = font.colr().expect("a colour icon should produce COLR");
+        let colr = font.colr().expect("a color icon should produce COLR");
         let records = colr.base_glyph_records().unwrap().unwrap();
-        assert_eq!(records.len(), 1, "only the colour icon gets a record");
+        assert_eq!(records.len(), 1, "only the color icon gets a record");
         assert_eq!(records[0].glyph_id().to_u32(), 2);
         assert_eq!(records[0].num_layers(), 2);
 
-        let cpal = font.cpal().expect("colour layers need a palette");
+        let cpal = font.cpal().expect("color layers need a palette");
         assert_eq!(cpal.num_palette_entries(), 2);
     }
 
     #[test]
-    fn a_font_of_plain_icons_has_no_colour_tables() {
+    fn a_font_of_plain_icons_has_no_color_tables() {
         let icons = vec![icon("plain", '\u{e900}', &square("8"))];
         let bytes = build(&icons, "Test Icons").unwrap();
         let font = FontRef::new(&bytes).unwrap();
-        assert!(font.colr().is_err(), "no COLR without a colour icon");
+        assert!(font.colr().is_err(), "no COLR without a color icon");
         assert!(font.cpal().is_err());
     }
 
