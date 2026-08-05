@@ -40,11 +40,11 @@ cargo install --path .
 - **Strokes are converted to outlines**, so stroke-drawn icon sets (Feather,
   Lucide, Tabler) come through as solid shapes. A font can only fill.
 - **Cubic curves become quadratics**, which is all TrueType can store.
-- **`fill-rule="evenodd"` is honoured.** Fonts only do non-zero winding, so
+- **`fill-rule="evenodd"` is honored.** Fonts only do non-zero winding, so
   even-odd contours are re-oriented by nesting depth; holes stay holes instead
   of filling in.
 - **White and faint washes are treated as paper, not ink.** A glyph has neither
-  colour nor opacity, so a white shape — or a shape at low opacity used as a
+  color nor opacity, so a white shape — or a shape at low opacity used as a
   tint — cannot be drawn as itself. What it means depends on what is under it:
   over existing artwork it is a knock-out and becomes a hole (the tick cut out
   of a filled circle, a wordmark cut out of a brand panel), and over nothing it
@@ -55,10 +55,10 @@ cargo install --path .
   and design tools emit the lowercase spelling, but the underlying parser only
   matches `currentColor` and would otherwise drop the paint — turning a
   stroke-drawn icon into a blank glyph.
-- **Multi-colour icons keep their colours.** An icon that uses more than one
-  colour is emitted as COLR/CPAL layers, so a card logo or a brand badge renders
+- **Multi-color icons keep their colors.** An icon that uses more than one
+  color is emitted as COLR/CPAL layers, so a card logo or a brand badge renders
   as drawn. Layers painted with `currentColor` use the palette entry reserved
-  for the text colour, so they still follow CSS `color` while their neighbours
+  for the text color, so they still follow CSS `color` while their neighbors
   stay fixed. Everything else stays a plain glyph — see below.
 - **The viewBox height maps onto one em.** An icon drawn edge to edge in its
   viewBox renders exactly `1em` tall. Width is scaled to match and becomes the
@@ -67,32 +67,32 @@ cargo install --path .
 The em box runs from 200 units below the baseline to 800 above it, which puts
 icons at the height that lines up with running text without extra CSS.
 
-## Colour
+## Color
 
 Most icons should follow the CSS `color` of whatever they sit in, and by default
-they do: an icon that uses a single colour — whether that is `currentColor` or a
-hardcoded `#3F3C43` — is a plain monochrome glyph and recolours freely.
+they do: an icon that uses a single color — whether that is `currentColor` or a
+hardcoded `#3F3C43` — is a plain monochrome glyph and recolors freely.
 
-Colour is only used when an icon needs it, which is when it uses **two or more
-colours**. What colour buys is the *relationship* between them: the white
+Color is only used when an icon needs it, which is when it uses **two or more
+colors**. What color buys is the *relationship* between them: the white
 lettering on a dark badge, the three panels of a card logo. Flattening destroys
-that. A single flat colour has no such relationship, so pinning it would take
-away recolouring and gain nothing — and an icon frozen in a mid grey disappears
+that. A single flat color has no such relationship, so pinning it would take
+away recoloring and gain nothing — and an icon frozen in a mid gray disappears
 against a dark background.
 
 ```
 arrow-right.svg   fill="#3F3C43"          -> plain glyph, follows CSS color
 user.svg          fill="currentColor"     -> plain glyph, follows CSS color
-mastercard.svg    red + orange + white    -> COLR layers, keeps its colours
+mastercard.svg    red + orange + white    -> COLR layers, keeps its colors
 circle-check.svg  blue disc + currentColor tick
                                           -> COLR: disc stays blue, tick follows CSS color
 ```
 
-Colour icons still carry the flattened monochrome outline as their base glyph,
+Color icons still carry the flattened monochrome outline as their base glyph,
 which is what a renderer without COLR support falls back to. The preview page
-marks them "fixed colour" so it is clear which ones will not follow your CSS.
+marks them "fixed color" so it is clear which ones will not follow your CSS.
 
-Gradients are reduced to their first stop, since a layer is one flat colour.
+Gradients are reduced to their first stop, since a layer is one flat color.
 
 ## Icons that cannot become glyphs
 
@@ -179,22 +179,22 @@ sticks. It carries:
 
 - **Search** over name, class, codepoint and folder. `/` jumps to it, `Esc`
   clears it.
-- **Ink** — a light/dark switch and a colour palette with a free-form picker, so
-  icons can be checked on both backgrounds and in any colour. The active colour
-  is always shown as a hex. Only the glyphs recolour; the labels stay readable.
+- **Ink** — a light/dark switch and a color palette with a free-form picker, so
+  icons can be checked on both backgrounds and in any color. The active color
+  is always shown as a hex. Only the glyphs recolor; the labels stay readable.
   Both choices are remembered.
-- **Colour** — filter by how an icon was drawn: *One colour* (a single named
-  colour), *Multicolour* (keeps its own colours and ignores your CSS), or
-  *Custom colour* (drawn with `currentColor`, so it takes whatever you set).
-  Only multicolour behaves differently on a page; the other two both recolour.
+- **Color** — filter by how an icon was drawn: *One color* (a single named
+  color), *Multicolor* (keeps its own colors and ignores your CSS), or
+  *Custom color* (drawn with `currentColor`, so it takes whatever you set).
+  Only multicolor behaves differently on a page; the other two both recolor.
 - **Folder** — narrow to one subfolder.
 
-The three filters combine, so "multicolour icons in `payment`" is two clicks.
+The three filters combine, so "multicolor icons in `payment`" is two clicks.
 
 Icons are one em tall but may be many ems wide. Each card is told its icon's
 aspect ratio and scales the glyph down to fit, so a wordmark 16 times wider than
 it is tall sits inside its card instead of running off the page; anything wider
-than 1.5× is labelled with its width, which explains why it renders small.
+than 1.5× is labeled with its width, which explains why it renders small.
 
 It links the generated stylesheet, so it renders with exactly the CSS a site
 would use. Its own layout comes from the [Tailwind browser build][tw] loaded
