@@ -22,19 +22,18 @@ pub enum LayerPaint {
     Fixed { r: u8, g: u8, b: u8, a: u8 },
 }
 
-/// How an icon is colored, which decides both how it is compiled and how it
-/// behaves on a page.
+/// How an icon is colored, which is really the question "what can I change?".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coloring {
-    /// Drawn entirely in `currentColor`. Follows the CSS `color` completely.
-    Foreground,
-    /// Drawn in one color the artwork names. Still compiled as a plain glyph,
-    /// so it follows the CSS `color` too — the color it was drawn in is not
-    /// kept, because a single color carries no relationship worth pinning.
-    Single { r: u8, g: u8, b: u8 },
-    /// Uses two or more colors, so it is compiled as COLR layers and keeps
-    /// them. Only its `currentColor` layers follow the CSS `color`.
-    Multi,
+    /// One color, and CSS `color` sets it. Compiled as a plain glyph, whether
+    /// the artwork said `currentColor` or named a color — a lone color carries
+    /// no relationship worth pinning, so it is left free to change.
+    Single,
+    /// Several colors, one of which follows CSS `color` while the rest are
+    /// fixed: a blue disc with a tick that recolors with the page.
+    Mixed,
+    /// Several colors, all fixed by the artwork. CSS `color` does nothing.
+    Fixed,
 }
 
 /// One color's worth of an icon. Layers are in paint order, bottom first.
@@ -56,8 +55,8 @@ pub struct Outline {
     pub problem: Option<Problem>,
     /// The icon split by color, bottom layer first.
     ///
-    /// Empty unless `coloring` is [`Coloring::Multi`]: everything else is a
-    /// plain glyph that follows the CSS `color`.
+    /// Empty for [`Coloring::Single`], which is a plain glyph that follows the
+    /// CSS `color`.
     pub layers: Vec<Layer>,
     /// How the artwork was colored, so the preview can say so and filter on it.
     pub coloring: Coloring,
@@ -233,10 +232,9 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
 
     let path = cubics_to_quads(&path);
     let coloring = classify(&drawn);
-    let layers = if coloring == Coloring::Multi {
-        build_layers(&drawn, scale)
-    } else {
-        Vec::new()
+    let layers = match coloring {
+        Coloring::Single => Vec::new(),
+        Coloring::Mixed | Coloring::Fixed => build_layers(&drawn, scale),
     };
     let problem = if found.raster {
         Some(Problem::RasterImage)
@@ -344,14 +342,13 @@ fn classify(drawn: &[Filled]) -> Coloring {
             seen.push(filled.paint);
         }
     }
-    match seen.as_slice() {
-        [] | [LayerPaint::Foreground] => Coloring::Foreground,
-        [LayerPaint::Fixed { r, g, b, .. }] => Coloring::Single {
-            r: *r,
-            g: *g,
-            b: *b,
-        },
-        _ => Coloring::Multi,
+    if seen.len() < 2 {
+        return Coloring::Single;
+    }
+    if seen.contains(&LayerPaint::Foreground) {
+        Coloring::Mixed
+    } else {
+        Coloring::Fixed
     }
 }
 

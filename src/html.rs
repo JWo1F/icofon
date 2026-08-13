@@ -216,24 +216,19 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
 
 /// The color buckets a reader can filter by.
 ///
-/// These describe how an icon was *drawn*, not how it behaves, because two of
-/// them behave identically: both a `currentColor` icon and a one-color icon
-/// compile to a plain glyph and recolor freely. Only multicolor is different.
+/// All three sit on one axis — how much of the icon CSS `color` can change —
+/// so the names alone say what each means without a legend.
 const KINDS: [(&str, &str, &str); 3] = [
+    ("single", "Recolorable", "one color, and CSS color sets it"),
     (
-        "single",
-        "One color",
-        "drawn in a single named color — CSS color still recolors it",
+        "mixed",
+        "Partly fixed",
+        "one part follows CSS color; the other colors are fixed by the artwork",
     ),
     (
-        "multi",
-        "Multicolor",
-        "keeps the colors it was drawn in, and ignores CSS color",
-    ),
-    (
-        "foreground",
-        "Custom color",
-        "drawn with currentColor, so it takes whatever color you set",
+        "fixed",
+        "Fixed",
+        "every color is fixed by the artwork, so CSS color does nothing",
     ),
 ];
 
@@ -288,9 +283,9 @@ fn folder_chips(icons: &[Icon]) -> String {
 /// Which color bucket an icon belongs to.
 fn kind_of(icon: &Icon) -> &'static str {
     match icon.outline.coloring {
-        Coloring::Foreground => "foreground",
-        Coloring::Single { .. } => "single",
-        Coloring::Multi => "multi",
+        Coloring::Single => "single",
+        Coloring::Mixed => "mixed",
+        Coloring::Fixed => "fixed",
     }
 }
 
@@ -330,20 +325,25 @@ fn section_open(group: Option<&str>) -> String {
     )
 }
 
+fn note(text: &str) -> String {
+    format!(
+        r#"
+        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{text}</code>"#
+    )
+}
+
 fn card(icon: &Icon, prefix: &str) -> String {
     let class = format!("{prefix}-{}", icon.name);
     let code = icon.codepoint as u32;
     // How many ems wide the glyph is. A wide icon would otherwise run straight
     // out of its card, so the stylesheet divides the display size by this.
     let aspect = f64::from(icon.outline.advance) / f64::from(crate::font::UNITS_PER_EM);
-    // A color icon paints its own colors, so it will not follow the CSS
-    // `color` the way the rest do. Worth saying on the card.
-    let color_note = if icon.outline.layers.is_empty() {
-        String::new()
-    } else {
-        r#"
-        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">own colors</code>"#
-            .to_string()
+    // Say when an icon will not simply follow the CSS `color`, and how far that
+    // goes: a mixed icon still has one part that does.
+    let color_note = match icon.outline.coloring {
+        Coloring::Single => String::new(),
+        Coloring::Mixed => note("partly fixed"),
+        Coloring::Fixed => note("fixed"),
     };
     let width_note = if aspect >= 1.5 {
         format!(
@@ -377,10 +377,10 @@ fn card(icon: &Icon, prefix: &str) -> String {
                 class.as_str(),
                 &format!("{code:04x}"),
                 icon.group.as_deref().unwrap_or_default(),
-                if icon.outline.layers.is_empty() {
-                    ""
-                } else {
-                    "color color"
+                match icon.outline.coloring {
+                    Coloring::Single => "",
+                    Coloring::Mixed => "partly fixed mixed multicolor",
+                    Coloring::Fixed => "fixed color multicolor",
                 },
             ]
             .iter()
@@ -654,21 +654,31 @@ mod tests {
     }
 
     #[test]
-    fn color_icons_are_marked_and_searchable() {
-        let mut colorful = icon("brand", '\u{e900}');
-        colorful.outline.layers.push(crate::svg::Layer {
-            path: kurbo::BezPath::new(),
-            paint: crate::svg::LayerPaint::Foreground,
-        });
-        let page = render(&[colorful], "Icons", "icon", "f.css");
-        assert!(page.contains("own colors"));
-        assert!(page.contains("color color"));
+    fn mixed_and_fixed_icons_are_marked_apart() {
+        // A mixed icon still has a part that follows CSS color, so it must not
+        // read the same as one that is fixed throughout.
+        let mut mixed = icon("badge", '\u{e900}');
+        mixed.outline.coloring = Coloring::Mixed;
+        let page = render(&[mixed], "Icons", "icon", "f.css");
+        assert!(page.contains("partly fixed"));
+        assert!(
+            page.contains("partly fixed mixed"),
+            "searchable by its kind"
+        );
+
+        let mut fixed = icon("logo", '\u{e900}');
+        fixed.outline.coloring = Coloring::Fixed;
+        let page = render(&[fixed], "Icons", "icon", "f.css");
+        assert!(page.contains(">fixed</code>"));
+        assert!(page.contains("fixed color multicolor"));
     }
 
     #[test]
-    fn plain_icons_are_not_marked_as_color() {
+    fn a_one_color_icon_carries_no_warning() {
+        // It behaves like every other glyph, so there is nothing to say.
         let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
-        assert!(!page.contains("own colors"));
+        assert!(!page.contains("partly fixed"));
+        assert!(!page.contains(">fixed</code>"));
     }
 
     #[test]
