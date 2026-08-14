@@ -183,10 +183,10 @@ sticks. It carries:
   icons can be checked on both backgrounds and in any color. The active color
   is always shown as a hex. Only the glyphs recolor; the labels stay readable.
   Both choices are remembered.
-- **Color** — filter by how an icon was drawn: *One color* (a single named
-  color), *Multicolor* (keeps its own colors and ignores your CSS), or
-  *Custom color* (drawn with `currentColor`, so it takes whatever you set).
-  Only multicolor behaves differently on a page; the other two both recolor.
+- **Color** — filter by how much CSS `color` can change: *Recolorable* (one
+  color, and you set it), *Partly fixed* (one part follows your color, the rest
+  are the artwork's), or *Fixed* (every color is the artwork's, so your CSS does
+  nothing).
 - **Folder** — narrow to one subfolder.
 
 The three filters combine, so "multicolor icons in `payment`" is two clicks.
