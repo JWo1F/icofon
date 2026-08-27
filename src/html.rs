@@ -51,19 +51,26 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     color: var(--icon-color, inherit);
   }}
 
-  /* The bar carries the page background only once it is actually stuck, so at
-     rest it reads as part of the page rather than as a floating chrome bar. */
-  #bar {{ transition: background-color .25s ease, box-shadow .25s ease; }}
-  #bar .bar-pad {{ padding-top: 2.75rem; padding-bottom: 1.1rem; transition: padding .25s ease; }}
-  #bar .bar-title {{ font-size: clamp(2rem, 5vw, 2.75rem); transition: font-size .25s ease; }}
-  /* Generous enough to hold the filter row when it wraps, and always clipped,
-     so the collapse cannot spill content across the hairline below it. */
-  #bar .bar-sub {{ max-height: 14rem; opacity: 1; overflow: hidden;
-                  transition: max-height .25s ease, opacity .2s ease; }}
-  #bar[data-stuck] {{ background: color-mix(in srgb, var(--bar) 88%, transparent); backdrop-filter: saturate(1.4) blur(14px); }}
-  #bar[data-stuck] .bar-pad {{ padding-top: .8rem; padding-bottom: .8rem; }}
-  #bar[data-stuck] .bar-title {{ font-size: 1.2rem; }}
-  #bar[data-stuck] .bar-sub {{ max-height: 0; opacity: 0; }}
+  /* The bar must not change height when it sticks. It is in normal flow, so a
+     height change shifts everything below it, the browser's scroll anchoring
+     compensates by moving the scroll position, and that flips the sentinel
+     back — a loop that reads as the page fighting you on small scrolls. Only
+     the background and the mini title change here, neither of which reflows. */
+  #bar {{ transition: background-color .25s ease; }}
+  #bar[data-stuck] {{
+    background: color-mix(in srgb, var(--bar) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(14px);
+  }}
+  /* Revealed by width, which cannot change the bar's height. */
+  #mini {{
+    max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
+    /* The row gap still applies around a zero-width item, which would indent
+       the search box away from the labels below it. */
+    margin-right: -1.25rem;
+    transition: max-width .3s ease, opacity .2s ease, margin .3s ease;
+  }}
+  #bar[data-stuck] #mini {{ max-width: 14rem; opacity: 1; margin-right: .25rem; }}
+
   /* A hairline that fades out at both ends, so the bar sits on the page
      instead of being boxed in by it. */
   .hairline {{ height: 1px; background: linear-gradient(90deg, transparent, var(--hair) 12%, var(--hair) 88%, transparent); }}
@@ -104,26 +111,27 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
 <body class="bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
 <div class="mx-auto max-w-6xl px-5 pb-20 sm:px-8">
 
+<div class="flex items-end justify-between gap-6 pt-10 pb-5">
+  <div class="min-w-0">
+    <h1 class="font-display text-[clamp(2rem,5vw,2.75rem)] leading-[0.95] tracking-tight">{family}</h1>
+    <p class="mt-2 font-mono text-[10px] tracking-[0.22em] text-zinc-500 uppercase dark:text-zinc-400">
+      <span id="shown">{total}</span> <span class="text-zinc-300 dark:text-zinc-600">/</span> {total} glyphs
+    </p>
+  </div>
+  <div class="flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
+    <button type="button" data-theme-set="light" title="Light background"
+            class="theme-btn size-7 cursor-pointer rounded-full text-[13px] leading-none">☀</button>
+    <button type="button" data-theme-set="dark" title="Dark background"
+            class="theme-btn size-7 cursor-pointer rounded-full text-[13px] leading-none">☾</button>
+  </div>
+</div>
+
 <div id="sentinel" aria-hidden="true"></div>
 <header id="bar" class="sticky top-0 z-20 -mx-5 px-5 sm:-mx-8 sm:px-8">
-  <div class="bar-pad">
+  <div class="pt-3 pb-3">
 
-    <div class="flex items-end justify-between gap-6">
-      <div class="min-w-0">
-        <h1 class="bar-title font-display leading-[0.95] tracking-tight">{family}</h1>
-        <p class="bar-sub mt-2 font-mono text-[10px] tracking-[0.22em] text-zinc-500 uppercase dark:text-zinc-400">
-          <span id="shown">{total}</span> <span class="text-zinc-300 dark:text-zinc-600">/</span> {total} glyphs
-        </p>
-      </div>
-      <div class="flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
-        <button type="button" data-theme-set="light" title="Light background"
-                class="theme-btn size-7 cursor-pointer rounded-full text-[13px] leading-none">☀</button>
-        <button type="button" data-theme-set="dark" title="Dark background"
-                class="theme-btn size-7 cursor-pointer rounded-full text-[13px] leading-none">☾</button>
-      </div>
-    </div>
-
-    <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-3">
+    <div class="flex flex-wrap items-center gap-x-5 gap-y-3">
+      <span id="mini" class="font-display text-lg leading-none">{family}</span>
       <label class="group relative flex min-w-56 flex-1 items-center">
         <svg class="pointer-events-none absolute left-3 size-4 text-zinc-400" viewBox="0 0 20 20" fill="none"
              stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -133,9 +141,9 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
                class="w-full rounded-full border border-zinc-200 bg-transparent py-2 pr-14 pl-9 text-sm
                       placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none
                       dark:border-zinc-800 dark:placeholder:text-zinc-500 dark:focus:border-zinc-600">
-        <kbd id="slash" class="pointer-events-none absolute right-3 rounded border border-zinc-200 px-1.5
-                               py-0.5 font-mono text-[10px] text-zinc-400 dark:border-zinc-800
-                               dark:text-zinc-500">/</kbd>
+        <kbd class="pointer-events-none absolute right-3 rounded border border-zinc-200 px-1.5
+                    py-0.5 font-mono text-[10px] text-zinc-400 dark:border-zinc-800
+                    dark:text-zinc-500">/</kbd>
       </label>
 
       <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
@@ -150,10 +158,10 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
       </div>
     </div>
 
-    <div class="bar-sub mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
       <div class="flex items-center gap-2">
         <span class="font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase dark:text-zinc-500">Color</span>
-        <div id="kinds" class="flex items-center gap-1">
+        <div id="kinds" class="flex flex-wrap items-center gap-1">
 {kinds}        </div>
       </div>
 {folders}    </div>
