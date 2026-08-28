@@ -174,8 +174,7 @@ showing the glyph, its name, its CSS class and its codepoint. Search filters on
 all of those — type a name, a class, a hex code or a folder — and groups that
 lose all their icons collapse with them. Clicking a class name copies it.
 
-The header stays put while you scroll, shrinking to a compact bar once it
-sticks. It carries:
+The title scrolls away; the toolbar under it sticks to the top and carries:
 
 - **Search** over name, class, codepoint and folder. `/` jumps to it, `Esc`
   clears it.
@@ -189,7 +188,11 @@ sticks. It carries:
   nothing).
 - **Folder** — narrow to one subfolder.
 
-The three filters combine, so "multicolor icons in `payment`" is two clicks.
+The three filters combine, so "fixed-color icons in `payment`" is two clicks.
+
+The toolbar keeps one height whether stuck or not. A sticky bar that resizes
+shifts the content below it, the browser's scroll anchoring then compensates by
+moving the scroll position, and the two fight each other on slow scrolls.
 
 Icons are one em tall but may be many ems wide. Each card is told its icon's
 aspect ratio and scales the glyph down to fit, so a wordmark 16 times wider than
