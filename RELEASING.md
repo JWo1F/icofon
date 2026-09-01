@@ -100,7 +100,40 @@ brew audit --strict --new ./Formula/icofon.rb
 `brew audit --new` is the stricter set of checks Homebrew applies to a formula
 it has not seen before; run it on the first submission.
 
+## 4. Build the bottles
+
+A bottle is a precompiled build. Without one, `brew install` compiles from
+source and pulls in the whole Rust toolchain — several minutes and a large
+download for something that takes 1.1 MB to ship.
+
+Once the formula in the tap points at the new tag, run the `Bottle` workflow in
+this repository:
+
+```bash
+gh workflow run bottle.yml -f version=0.2.0
+```
+
+It builds on macOS 26, 15 and 14 (Apple Silicon) and macOS 15 (Intel), attaches
+the tarballs to the release, and writes the `bottle do` block into the tap
+formula. Homebrew falls back to a bottle from an older macOS of the same
+architecture, so those four cover more than they look like they do; anything
+else — Linux, older macOS — still builds from source, which works.
+
+Pushing the formula needs a `TAP_TOKEN` repository secret: a personal access
+token with `contents: write` on `JWo1F/homebrew-tap`. Without it the workflow
+still builds and uploads the bottles, and prints the block to paste in by hand.
+
+**Bottles are not byte-reproducible.** Re-running the workflow for a version
+that already has bottles replaces the tarballs and so changes their checksums,
+which invalidates whatever is already in the formula. Let the workflow write the
+block — it uploads and commits from the same build — rather than copying hashes
+from an earlier run.
+
 ## Moving to homebrew-core later
+
+Once in core, Homebrew's own CI builds the bottles for every platform they
+support and the `bottle do` block is maintained for you — the `Bottle` workflow
+and the `TAP_TOKEN` secret both go away.
 
 A personal tap needs no approval and can be published the day a release is cut.
 `homebrew-core` — where `brew install icofon` works without the tap prefix — has
@@ -116,3 +149,6 @@ meets it, the same formula can be submitted there, and the tap kept as an alias.
 - [ ] `cargo publish`
 - [ ] Formula `url`, `version` and `sha256` updated in the tap
 - [ ] `brew install --build-from-source` and `brew test` pass
+- [ ] `Bottle` workflow run, and the `bottle do` block in the formula matches
+      the tarballs actually attached to the release
+- [ ] `brew install` on a clean cache pours the bottle instead of compiling

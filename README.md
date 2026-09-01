@@ -29,7 +29,7 @@ Drop the first two on a page and the icons are available as CSS classes:
 
 ## Install
 
-Homebrew:
+Homebrew — installs a prebuilt binary, so there is nothing to compile:
 
 ```bash
 brew install jwo1f/tap/icofon
