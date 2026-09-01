@@ -1,6 +1,6 @@
 [package]
 name = "icofon"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Build an icon font (TTF + CSS) from a folder of SVG files"
 authors = ["Alexander Ivashkin"]
