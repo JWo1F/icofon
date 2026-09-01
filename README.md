@@ -3,22 +3,41 @@
 Build an icon font and a matching stylesheet from a folder of SVG files.
 
 ```bash
-icofon ./folder font.ttf
+icofon build ./icons -o dist
 ```
 
-That reads every `.svg` in `./folder` and writes three files next to it:
+That reads every `.svg` under `./icons` and writes:
+
+```
+16 icons
+  dist/icons.woff2             3.1 KB
+  dist/icons.woff              3.5 KB
+  dist/icons.ttf               5.1 KB
+  dist/icons.css               1.3 KB
+  dist/index.html              35.5 KB
+  icons/icofon.json            476 B
+```
 
 | File | What it is |
 | --- | --- |
-| `font.ttf` | the icon font |
-| `font.css` | `@font-face` plus one class per icon |
-| `example.html` | a searchable preview of every icon |
-
-and one file inside the icon folder itself:
-
-| File | What it is |
-| --- | --- |
+| `icons.woff2` | the font a browser will actually use — brotli, smallest by far |
+| `icons.woff` | deflate, the fallback for anything older than 2016 |
+| `icons.ttf` | uncompressed, for desktop apps and non-web tooling |
+| `icons.css` | `@font-face` listing all three, plus one class per icon |
+| `index.html` | a searchable preview of every icon |
 | `icofon.json` | records each icon's codepoint so it never moves — commit it |
+
+The stylesheet offers the formats smallest first, so a browser takes `woff2`
+and never downloads the rest:
+
+```css
+@font-face {
+  font-family: 'icons';
+  src: url('icons.woff2') format('woff2'),
+       url('icons.woff') format('woff'),
+       url('icons.ttf') format('truetype');
+}
+```
 
 Drop the first two on a page and the icons are available as CSS classes:
 
@@ -46,6 +65,35 @@ From a clone:
 ```bash
 cargo install --path .
 ```
+
+## Commands
+
+```
+icofon build [SOURCE]   Build the fonts, stylesheet and preview page
+icofon check [SOURCE]   Convert every icon and report, writing nothing
+icofon watch [SOURCE]   Build, then rebuild whenever an icon changes
+icofon init  [SOURCE]   Write an icofon.toml
+```
+
+`check` is the one for CI: it fails on any icon that cannot become a glyph and
+writes nothing.
+
+## icofon.toml
+
+Anything you would otherwise retype belongs in a config file. `icofon init`
+writes one, and every command looks for it in the working directory and each
+directory above, so a build behaves the same from anywhere in the project.
+
+```toml
+source  = "icons"
+out     = "dist"
+name    = "icons"
+formats = ["woff2", "woff", "ttf"]
+prefix  = "icon"
+```
+
+Paths in the file resolve relative to the file, not to where you ran the
+command. Flags override the file; the file overrides the defaults.
 
 ## CSS classes
 
@@ -152,7 +200,7 @@ Error: 4 of 410 icons cannot be turned into a glyph:
       the artwork is a bitmap embedded in the SVG, and a glyph can only be an
       outline; re-export it as vector paths
   ...
-Fix them, or pass --skip-errors to leave them out.
+Fix them, or pass --on-error skip to leave them out.
 ```
 
 The cases caught are a **bitmap wrapped in an SVG** — a PNG pasted out of a
@@ -161,7 +209,7 @@ shaped by a **`<mask>`**, which decides per-pixel how much of each shape
 survives and so cannot be reduced to an outline, and a file that yields
 **nothing drawable at all**.
 
-`--skip-errors` builds the font without them and lists what it left out on
+`--on-error skip` builds the font without them and lists what it left out on
 stderr.
 
 What is *not* caught, because the shape still converts: gradients and partial
@@ -215,7 +263,7 @@ codepoint — the old one is retired, not reused.
 
 ## The preview page
 
-`example.html` lists every icon in a grid, grouped by subfolder, each card
+`index.html` lists every icon in a grid, grouped by subfolder, each card
 showing the glyph, its name, its CSS class and its codepoint. Search filters on
 all of those — type a name, a class, a hex code or a folder — and groups that
 lose all their icons collapse with them. Clicking a class name copies it.
@@ -251,7 +299,7 @@ from a CDN, which compiles utility classes at page load; that keeps the page
 buildless, but it does mean the preview needs network access to look right. The
 font and stylesheet have no such dependency.
 
-Use `--html <PATH>` to put it somewhere else, or `--no-html` to skip it.
+Use `--no-preview` to skip it.
 
 [tw]: https://tailwindcss.com/docs/installation/play-cdn
 
@@ -306,20 +354,19 @@ their codepoints. Renaming one of the originals is the durable fix.
 ## Options
 
 ```
-icofon <INPUT> <OUTPUT> [OPTIONS]
+icofon build [SOURCE] [OPTIONS]
 
-  --css <PATH>          Stylesheet path (default: OUTPUT with a .css extension)
-  --html <PATH>         Preview page path (default: example.html beside the stylesheet)
-  --no-html             Skip the preview page
-  --manifest <PATH>     Codepoint manifest path (default: icofon.json in the icon folder)
-  --no-manifest         Do not read or write the manifest; codepoints then move as icons are added
-  --skip-errors         Leave out icons that cannot become a glyph, listing them on stderr,
-                        instead of failing the build
-  --font-family <NAME>  Family name in the font and the CSS (default: output file name)
-  --prefix <PREFIX>     CSS class prefix (default: icon)
-  --base-class          Require the prefix as its own class: class="icon icon-arrow-left".
-                        Scopes every rule instead of claiming all of `icon-*`
-  --start <HEX>         First codepoint to assign (default: e900)
+  -o, --out <DIR>        Where to write (default: dist)
+      --name <NAME>      Base file name and font family (default: the source folder's name)
+      --formats <LIST>   Containers to write (default: woff2,woff,ttf)
+      --prefix <PREFIX>  CSS class prefix (default: icon)
+      --base-class       Require the prefix as its own class: class="icon icon-arrow-left"
+      --no-preview       Skip index.html
+      --manifest <PATH>  Codepoint manifest (default: icofon.json in the icon folder)
+      --no-manifest      Assign codepoints from scratch every build; they will move
+      --on-error <WHAT>  fail (default) or skip icons that cannot become a glyph
+      --start <HEX>      First codepoint to assign (default: e900)
+      --config <PATH>    Read this file instead of looking for icofon.toml
 ```
 
 Generated files link each other by relative path, so pointing `--css` or
@@ -328,11 +375,17 @@ Generated files link each other by relative path, so pointing `--css` or
 ## Example
 
 ```bash
-icofon examples/icons dist/icons.ttf --font-family "My Icons" --prefix ico
+icofon build examples/icons -o dist --name "My Icons" --prefix ico
 ```
 
 ```
-16 icons -> dist/icons.ttf + dist/icons.css + dist/example.html + examples/icons/icofon.json
+16 icons
+  dist/My Icons.woff2          3.1 KB
+  dist/My Icons.woff           3.5 KB
+  dist/My Icons.ttf            5.1 KB
+  dist/My Icons.css            1.3 KB
+  dist/index.html              35.4 KB
+  examples/icons/icofon.json   476 B
 ```
 
 ## Contributing
