@@ -1,0 +1,3 @@
+# Two spaces. Rust's default is four; this project prefers the shallower
+# indent, which keeps the deeply nested SVG and HTML builders readable.
+tab_spaces = 2

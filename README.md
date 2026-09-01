@@ -342,6 +342,9 @@ Bug reports and pull requests are welcome at
 codepoint manifest, the stylesheet and the preview page; a change to any of
 those should come with a test that fails without it.
 
+Run `cargo fmt` before committing. The project is formatted by rustfmt with
+`tab_spaces = 2` (see `rustfmt.toml`), rather than Rust's default four.
+
 Because a font is compiled output, the useful check on a conversion change is
 what it does to a real icon set: build one before and after, and say in the
 commit message how many icons changed and which. Builds are reproducible, so

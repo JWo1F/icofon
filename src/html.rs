@@ -14,10 +14,10 @@ const TAILWIND_CDN: &str = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"
 /// `css_url` is the stylesheet's location relative to the page, so the preview
 /// exercises exactly the same CSS a site would use.
 pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str) -> String {
-    let family = escape(family);
-    let mut page = String::new();
+  let family = escape(family);
+  let mut page = String::new();
 
-    page.push_str(&format!(
+  page.push_str(&format!(
         r##"<!doctype html>
 <html lang="en">
 <head>
@@ -189,17 +189,17 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
             .collect::<String>(),
     ));
 
-    // Icons arrive sorted by group, so consecutive runs share a section.
-    for (group, members) in group_runs(icons) {
-        page.push_str(&section_open(group));
-        for icon in members {
-            page.push_str(&card(icon, classes));
-        }
-        page.push_str("  </div>\n</section>\n");
+  // Icons arrive sorted by group, so consecutive runs share a section.
+  for (group, members) in group_runs(icons) {
+    page.push_str(&section_open(group));
+    for icon in members {
+      page.push_str(&card(icon, classes));
     }
+    page.push_str("  </div>\n</section>\n");
+  }
 
-    page.push_str(&format!(
-        r#"</main>
+  page.push_str(&format!(
+    r#"</main>
 
 <p id="empty" hidden class="mt-10 text-center text-zinc-500 dark:text-zinc-400">
   No icons match that search.
@@ -217,10 +217,10 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
 </body>
 </html>
 "#,
-        script = SCRIPT,
-    ));
+    script = SCRIPT,
+  ));
 
-    page
+  page
 }
 
 /// The color buckets a reader can filter by.
@@ -228,146 +228,146 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
 /// All three sit on one axis — how much of the icon CSS `color` can change —
 /// so the names alone say what each means without a legend.
 const KINDS: [(&str, &str, &str); 3] = [
-    ("single", "Recolorable", "one color, and CSS color sets it"),
-    (
-        "mixed",
-        "Partly fixed",
-        "one part follows CSS color; the other colors are fixed by the artwork",
-    ),
-    (
-        "fixed",
-        "Fixed",
-        "every color is fixed by the artwork, so CSS color does nothing",
-    ),
+  ("single", "Recolorable", "one color, and CSS color sets it"),
+  (
+    "mixed",
+    "Partly fixed",
+    "one part follows CSS color; the other colors are fixed by the artwork",
+  ),
+  (
+    "fixed",
+    "Fixed",
+    "every color is fixed by the artwork, so CSS color does nothing",
+  ),
 ];
 
 fn kind_chips(icons: &[Icon]) -> String {
-    let mut out = String::new();
-    for (key, label, title) in KINDS {
-        let count = icons.iter().filter(|i| kind_of(i) == key).count();
-        if count == 0 {
-            continue;
-        }
-        out.push_str(&format!(
+  let mut out = String::new();
+  for (key, label, title) in KINDS {
+    let count = icons.iter().filter(|i| kind_of(i) == key).count();
+    if count == 0 {
+      continue;
+    }
+    out.push_str(&format!(
             "          <button type=\"button\" data-kind=\"{key}\" title=\"{title}\"\n\
              \x20                   class=\"chip cursor-pointer rounded-full border border-zinc-200 px-2.5 \
              py-1 font-mono text-[11px] text-zinc-500 dark:border-zinc-800 \
              dark:text-zinc-400\">{label} <span class=\"text-zinc-300 dark:text-zinc-600\">{count}\
              </span></button>\n"
         ));
-    }
-    out
+  }
+  out
 }
 
 fn folder_chips(icons: &[Icon]) -> String {
-    let mut folders: Vec<&str> = icons.iter().filter_map(|i| i.group.as_deref()).collect();
-    folders.sort_unstable();
-    folders.dedup();
-    if folders.is_empty() {
-        return String::new();
-    }
+  let mut folders: Vec<&str> = icons.iter().filter_map(|i| i.group.as_deref()).collect();
+  folders.sort_unstable();
+  folders.dedup();
+  if folders.is_empty() {
+    return String::new();
+  }
 
-    let mut options = String::from("          <option value=\"\">All folders</option>\n");
-    for folder in folders {
-        let count = icons
-            .iter()
-            .filter(|i| i.group.as_deref() == Some(folder))
-            .count();
-        options.push_str(&format!(
-            "          <option value=\"{f}\">{f} ({count})</option>\n",
-            f = escape(folder)
-        ));
-    }
+  let mut options = String::from("          <option value=\"\">All folders</option>\n");
+  for folder in folders {
+    let count = icons
+      .iter()
+      .filter(|i| i.group.as_deref() == Some(folder))
+      .count();
+    options.push_str(&format!(
+      "          <option value=\"{f}\">{f} ({count})</option>\n",
+      f = escape(folder)
+    ));
+  }
 
-    format!(
-        "      <div class=\"flex items-center gap-2\">\n\
+  format!(
+    "      <div class=\"flex items-center gap-2\">\n\
          \x20       <span class=\"font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase \
          dark:text-zinc-500\">Folder</span>\n\
          \x20       <select id=\"folder\" class=\"cursor-pointer rounded-full border border-zinc-200 \
          bg-transparent py-1 pr-7 pl-2.5 font-mono text-[11px] text-zinc-500 focus:outline-none \
          dark:border-zinc-800 dark:text-zinc-400\">\n{options}        </select>\n      </div>\n"
-    )
+  )
 }
 
 /// Which color bucket an icon belongs to.
 fn kind_of(icon: &Icon) -> &'static str {
-    match icon.outline.coloring {
-        Coloring::Single => "single",
-        Coloring::Mixed => "mixed",
-        Coloring::Fixed => "fixed",
-    }
+  match icon.outline.coloring {
+    Coloring::Single => "single",
+    Coloring::Mixed => "mixed",
+    Coloring::Fixed => "fixed",
+  }
 }
 
 /// Split the icons into consecutive runs sharing a group, preserving order.
 fn group_runs(icons: &[Icon]) -> Vec<(Option<&str>, &[Icon])> {
-    let mut runs = Vec::new();
-    let mut rest = icons;
-    while let Some(first) = rest.first() {
-        let group = first.group.as_deref();
-        let end = rest
-            .iter()
-            .position(|icon| icon.group.as_deref() != group)
-            .unwrap_or(rest.len());
-        let (run, remainder) = rest.split_at(end);
-        runs.push((group, run));
-        rest = remainder;
-    }
-    runs
+  let mut runs = Vec::new();
+  let mut rest = icons;
+  while let Some(first) = rest.first() {
+    let group = first.group.as_deref();
+    let end = rest
+      .iter()
+      .position(|icon| icon.group.as_deref() != group)
+      .unwrap_or(rest.len());
+    let (run, remainder) = rest.split_at(end);
+    runs.push((group, run));
+    rest = remainder;
+  }
+  runs
 }
 
 /// Open a `<section>` for one group. Icons at the top level get a section with
 /// no heading, so an icon folder without subfolders looks exactly as before.
 fn section_open(group: Option<&str>) -> String {
-    let heading = match group {
-        Some(group) => format!(
-            r#"  <h2 class="mb-3 font-mono text-sm font-medium text-zinc-500 dark:text-zinc-400">{}</h2>
+  let heading = match group {
+    Some(group) => format!(
+      r#"  <h2 class="mb-3 font-mono text-sm font-medium text-zinc-500 dark:text-zinc-400">{}</h2>
 "#,
-            escape(group)
-        ),
-        None => String::new(),
-    };
-    format!(
-        r#"<section class="group mb-8" data-group="{group}">
+      escape(group)
+    ),
+    None => String::new(),
+  };
+  format!(
+    r#"<section class="group mb-8" data-group="{group}">
 {heading}  <div class="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
 "#,
-        group = escape(group.unwrap_or_default()),
-    )
+    group = escape(group.unwrap_or_default()),
+  )
 }
 
 fn note(text: &str) -> String {
-    format!(
-        r#"
+  format!(
+    r#"
         <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{text}</code>"#
-    )
+  )
 }
 
 fn card(icon: &Icon, classes: Classes<'_>) -> String {
-    // What you would write in a `class` attribute, which is what the button
-    // copies, and the selector that matches it, which is what it displays.
-    let class = classes.attr(&icon.name);
-    let selector = classes.selector(&icon.name);
-    let code = icon.codepoint as u32;
-    // How many ems wide the glyph is. A wide icon would otherwise run straight
-    // out of its card, so the stylesheet divides the display size by this.
-    let aspect = f64::from(icon.outline.advance) / f64::from(crate::font::UNITS_PER_EM);
-    // Say when an icon will not simply follow the CSS `color`, and how far that
-    // goes: a mixed icon still has one part that does.
-    let color_note = match icon.outline.coloring {
-        Coloring::Single => String::new(),
-        Coloring::Mixed => note("partly fixed"),
-        Coloring::Fixed => note("fixed"),
-    };
-    let width_note = if aspect >= 1.5 {
-        format!(
-            r#"
-        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{aspect:.1}× wide</code>"#
-        )
-    } else {
-        String::new()
-    };
-
+  // What you would write in a `class` attribute, which is what the button
+  // copies, and the selector that matches it, which is what it displays.
+  let class = classes.attr(&icon.name);
+  let selector = classes.selector(&icon.name);
+  let code = icon.codepoint as u32;
+  // How many ems wide the glyph is. A wide icon would otherwise run straight
+  // out of its card, so the stylesheet divides the display size by this.
+  let aspect = f64::from(icon.outline.advance) / f64::from(crate::font::UNITS_PER_EM);
+  // Say when an icon will not simply follow the CSS `color`, and how far that
+  // goes: a mixed icon still has one part that does.
+  let color_note = match icon.outline.coloring {
+    Coloring::Single => String::new(),
+    Coloring::Mixed => note("partly fixed"),
+    Coloring::Fixed => note("fixed"),
+  };
+  let width_note = if aspect >= 1.5 {
     format!(
-        r#"    <figure data-search="{search}" data-kind="{kind}" data-group="{group}" style="--aspect:{aspect:.3}"
+      r#"
+        <code class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{aspect:.1}× wide</code>"#
+    )
+  } else {
+    String::new()
+  };
+
+  format!(
+    r#"    <figure data-search="{search}" data-kind="{kind}" data-group="{group}" style="--aspect:{aspect:.3}"
             class="card m-0 flex flex-col items-center gap-3 rounded-xl border border-zinc-200
                    px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
       <span class="glyph {class} leading-none" aria-hidden="true"></span>
@@ -382,43 +382,42 @@ fn card(icon: &Icon, classes: Classes<'_>) -> String {
       </figcaption>
     </figure>
 "#,
-        // Searchable on name, class, hex code and group, in one flat haystack.
-        search = escape(
-            &[
-                icon.name.as_str(),
-                class.as_str(),
-                &format!("{code:04x}"),
-                icon.group.as_deref().unwrap_or_default(),
-                match icon.outline.coloring {
-                    Coloring::Single => "",
-                    Coloring::Mixed => "partly fixed mixed multicolor",
-                    Coloring::Fixed => "fixed color multicolor",
-                },
-            ]
-            .iter()
-            .filter(|part| !part.is_empty())
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(" ")
-        ),
-        class = escape(&class),
-        selector = escape(&selector),
-        name = escape(&icon.label),
-        code = code,
-        aspect = aspect,
-        width_note = width_note,
-        color_note = color_note,
-        kind = kind_of(icon),
-        group = escape(icon.group.as_deref().unwrap_or_default()),
-    )
+    // Searchable on name, class, hex code and group, in one flat haystack.
+    search = escape(
+      &[
+        icon.name.as_str(),
+        class.as_str(),
+        &format!("{code:04x}"),
+        icon.group.as_deref().unwrap_or_default(),
+        match icon.outline.coloring {
+          Coloring::Single => "",
+          Coloring::Mixed => "partly fixed mixed multicolor",
+          Coloring::Fixed => "fixed color multicolor",
+        },
+      ]
+      .iter()
+      .filter(|part| !part.is_empty())
+      .cloned()
+      .collect::<Vec<_>>()
+      .join(" ")
+    ),
+    class = escape(&class),
+    selector = escape(&selector),
+    name = escape(&icon.label),
+    code = code,
+    aspect = aspect,
+    width_note = width_note,
+    color_note = color_note,
+    kind = kind_of(icon),
+    group = escape(icon.group.as_deref().unwrap_or_default()),
+  )
 }
 
 /// Preset colors for the preview. Black and white first, since checking an
 /// icon against each background is the common case, then a few hues. Not a
 /// palette editor — the picker beside them covers anything else.
 const SWATCHES: [&str; 9] = [
-    "#000000", "#ffffff", "#71717a", "#2563eb", "#0d9488", "#16a34a", "#ca8a04", "#dc2626",
-    "#9333ea",
+  "#000000", "#ffffff", "#71717a", "#2563eb", "#0d9488", "#16a34a", "#ca8a04", "#dc2626", "#9333ea",
 ];
 
 const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.card'));
@@ -588,232 +587,257 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   });"#;
 
 fn escape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
+  let mut out = String::with_capacity(value.len());
+  for ch in value.chars() {
+    match ch {
+      '&' => out.push_str("&amp;"),
+      '<' => out.push_str("&lt;"),
+      '>' => out.push_str("&gt;"),
+      '"' => out.push_str("&quot;"),
+      '\'' => out.push_str("&#39;"),
+      _ => out.push(ch),
     }
-    out
+  }
+  out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::svg;
+  use super::*;
+  use crate::svg;
 
-    /// The default naming: a single prefixed class per icon.
-    fn classes(prefix: &str) -> Classes<'_> {
-        Classes {
-            prefix,
-            base_class: false,
-        }
+  /// The default naming: a single prefixed class per icon.
+  fn classes(prefix: &str) -> Classes<'_> {
+    Classes {
+      prefix,
+      base_class: false,
     }
+  }
 
-    fn icon(name: &str, codepoint: char) -> Icon {
-        grouped(name, codepoint, None)
-    }
+  fn icon(name: &str, codepoint: char) -> Icon {
+    grouped(name, codepoint, None)
+  }
 
-    /// Builds an icon the way `load_icons` does: the group is folded into the
-    /// name, and the label is the file part that is left.
-    fn grouped(label: &str, codepoint: char, group: Option<&str>) -> Icon {
-        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  /// Builds an icon the way `load_icons` does: the group is folded into the
+  /// name, and the label is the file part that is left.
+  fn grouped(label: &str, codepoint: char, group: Option<&str>) -> Icon {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <rect width="24" height="24" fill="#000"/>
                       </svg>"##;
-        let name = match group {
-            Some(group) => format!("{}-{label}", group.replace('/', "-")),
-            None => label.to_string(),
-        };
-        Icon {
-            name,
-            label: label.to_string(),
-            group: group.map(str::to_string),
-            source: label.into(),
-            codepoint,
-            outline: svg::parse(svg.as_bytes(), label).unwrap(),
-        }
+    let name = match group {
+      Some(group) => format!("{}-{label}", group.replace('/', "-")),
+      None => label.to_string(),
+    };
+    Icon {
+      name,
+      label: label.to_string(),
+      group: group.map(str::to_string),
+      source: label.into(),
+      codepoint,
+      outline: svg::parse(svg.as_bytes(), label).unwrap(),
     }
+  }
 
-    #[test]
-    fn a_base_class_is_written_on_the_glyph_and_offered_for_copying() {
-        let classes = Classes {
-            prefix: "icon",
-            base_class: true,
-        };
-        let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes, "f.css");
+  #[test]
+  fn a_base_class_is_written_on_the_glyph_and_offered_for_copying() {
+    let classes = Classes {
+      prefix: "icon",
+      base_class: true,
+    };
+    let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes, "f.css");
 
-        assert!(page.contains(r#"<span class="glyph icon icon-arrow-left "#));
-        // The button copies what goes in a `class` attribute and shows the
-        // selector that matches it.
-        assert!(page.contains(r#"data-copy="icon icon-arrow-left""#));
-        assert!(page.contains(">.icon.icon-arrow-left</button>"));
+    assert!(page.contains(r#"<span class="glyph icon icon-arrow-left "#));
+    // The button copies what goes in a `class` attribute and shows the
+    // selector that matches it.
+    assert!(page.contains(r#"data-copy="icon icon-arrow-left""#));
+    assert!(page.contains(">.icon.icon-arrow-left</button>"));
+  }
+
+  #[test]
+  fn lists_every_icon_with_its_class_and_codepoint() {
+    let icons = vec![icon("arrow-left", '\u{e900}'), icon("star", '\u{e9f0}')];
+    let page = render(&icons, "My Icons", classes("ico"), "icons.css");
+
+    assert!(page.contains(r#"<link rel="stylesheet" href="icons.css">"#));
+    // Each card carries the glyph, the bare name, the class and the codepoint.
+    assert!(page.contains(r#"<span class="glyph ico-arrow-left "#));
+    assert!(page.contains(">arrow-left</span>"));
+    assert!(page.contains(r#"data-copy="ico-arrow-left""#));
+    assert!(page.contains(">.ico-arrow-left</button>"));
+    assert!(page.contains("U+E900"));
+    assert!(page.contains(r#"<span class="glyph ico-star "#));
+    assert!(page.contains("U+E9F0"));
+    assert_eq!(page.matches("data-search=").count(), icons.len());
+  }
+
+  #[test]
+  fn the_header_offers_a_color_palette() {
+    let page = render(
+      &[icon("plain", '\u{e900}')],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    for swatch in SWATCHES {
+      assert!(
+        page.contains(&format!(r#"data-color="{swatch}""#)),
+        "{swatch}"
+      );
     }
+    // Black and white lead, so both backgrounds are one click away.
+    assert!(page.contains(r##"data-color="#000000""##));
+    assert!(page.contains(r##"data-color="#ffffff""##));
+    // Every swatch is a real color: there is no "inherit" option to leave
+    // the readout blank.
+    assert!(!page.contains(r#"data-color="""#));
+    assert!(page.contains(r#"id="picker" type="color""#));
+  }
 
-    #[test]
-    fn lists_every_icon_with_its_class_and_codepoint() {
-        let icons = vec![icon("arrow-left", '\u{e900}'), icon("star", '\u{e9f0}')];
-        let page = render(&icons, "My Icons", classes("ico"), "icons.css");
+  #[test]
+  fn mixed_and_fixed_icons_are_marked_apart() {
+    // A mixed icon still has a part that follows CSS color, so it must not
+    // read the same as one that is fixed throughout.
+    let mut mixed = icon("badge", '\u{e900}');
+    mixed.outline.coloring = Coloring::Mixed;
+    let page = render(&[mixed], "Icons", classes("icon"), "f.css");
+    assert!(page.contains("partly fixed"));
+    assert!(
+      page.contains("partly fixed mixed"),
+      "searchable by its kind"
+    );
 
-        assert!(page.contains(r#"<link rel="stylesheet" href="icons.css">"#));
-        // Each card carries the glyph, the bare name, the class and the codepoint.
-        assert!(page.contains(r#"<span class="glyph ico-arrow-left "#));
-        assert!(page.contains(">arrow-left</span>"));
-        assert!(page.contains(r#"data-copy="ico-arrow-left""#));
-        assert!(page.contains(">.ico-arrow-left</button>"));
-        assert!(page.contains("U+E900"));
-        assert!(page.contains(r#"<span class="glyph ico-star "#));
-        assert!(page.contains("U+E9F0"));
-        assert_eq!(page.matches("data-search=").count(), icons.len());
-    }
+    let mut fixed = icon("logo", '\u{e900}');
+    fixed.outline.coloring = Coloring::Fixed;
+    let page = render(&[fixed], "Icons", classes("icon"), "f.css");
+    assert!(page.contains(">fixed</code>"));
+    assert!(page.contains("fixed color multicolor"));
+  }
 
-    #[test]
-    fn the_header_offers_a_color_palette() {
-        let page = render(&[icon("plain", '\u{e900}')], "Icons", classes("icon"), "f.css");
-        for swatch in SWATCHES {
-            assert!(
-                page.contains(&format!(r#"data-color="{swatch}""#)),
-                "{swatch}"
-            );
-        }
-        // Black and white lead, so both backgrounds are one click away.
-        assert!(page.contains(r##"data-color="#000000""##));
-        assert!(page.contains(r##"data-color="#ffffff""##));
-        // Every swatch is a real color: there is no "inherit" option to leave
-        // the readout blank.
-        assert!(!page.contains(r#"data-color="""#));
-        assert!(page.contains(r#"id="picker" type="color""#));
-    }
+  #[test]
+  fn a_one_color_icon_carries_no_warning() {
+    // It behaves like every other glyph, so there is nothing to say.
+    let page = render(
+      &[icon("plain", '\u{e900}')],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    assert!(!page.contains("partly fixed"));
+    assert!(!page.contains(">fixed</code>"));
+  }
 
-    #[test]
-    fn mixed_and_fixed_icons_are_marked_apart() {
-        // A mixed icon still has a part that follows CSS color, so it must not
-        // read the same as one that is fixed throughout.
-        let mut mixed = icon("badge", '\u{e900}');
-        mixed.outline.coloring = Coloring::Mixed;
-        let page = render(&[mixed], "Icons", classes("icon"), "f.css");
-        assert!(page.contains("partly fixed"));
-        assert!(
-            page.contains("partly fixed mixed"),
-            "searchable by its kind"
-        );
+  #[test]
+  fn wide_icons_carry_their_aspect_so_the_card_can_shrink_them() {
+    let mut wide = icon("wordmark", '\u{e900}');
+    wide.outline.advance = 16_538;
+    let page = render(&[wide], "Icons", classes("icon"), "f.css");
+    assert!(
+      page.contains("--aspect:16.538"),
+      "the card is told how wide it is"
+    );
+    assert!(
+      page.contains("16.5× wide"),
+      "and says so, since it renders small"
+    );
+  }
 
-        let mut fixed = icon("logo", '\u{e900}');
-        fixed.outline.coloring = Coloring::Fixed;
-        let page = render(&[fixed], "Icons", classes("icon"), "f.css");
-        assert!(page.contains(">fixed</code>"));
-        assert!(page.contains("fixed color multicolor"));
-    }
+  #[test]
+  fn ordinary_icons_get_no_width_note() {
+    let page = render(
+      &[icon("square", '\u{e900}')],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    assert!(page.contains("--aspect:1.000"));
+    assert!(!page.contains("× wide"));
+  }
 
-    #[test]
-    fn a_one_color_icon_carries_no_warning() {
-        // It behaves like every other glyph, so there is nothing to say.
-        let page = render(&[icon("plain", '\u{e900}')], "Icons", classes("icon"), "f.css");
-        assert!(!page.contains("partly fixed"));
-        assert!(!page.contains(">fixed</code>"));
-    }
+  #[test]
+  fn pulls_tailwind_from_the_cdn_so_the_page_needs_no_build() {
+    let page = render(&[icon("ok", '\u{e900}')], "Icons", classes("icon"), "f.css");
+    assert!(page.contains(&format!(r#"<script src="{TAILWIND_CDN}"></script>"#)));
+  }
 
-    #[test]
-    fn wide_icons_carry_their_aspect_so_the_card_can_shrink_them() {
-        let mut wide = icon("wordmark", '\u{e900}');
-        wide.outline.advance = 16_538;
-        let page = render(&[wide], "Icons", classes("icon"), "f.css");
-        assert!(
-            page.contains("--aspect:16.538"),
-            "the card is told how wide it is"
-        );
-        assert!(
-            page.contains("16.5× wide"),
-            "and says so, since it renders small"
-        );
-    }
+  #[test]
+  fn search_index_covers_name_class_and_code() {
+    let page = render(
+      &[icon("arrow-left", '\u{e900}')],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    assert!(page.contains(r#"data-search="arrow-left icon-arrow-left e900""#));
+  }
 
-    #[test]
-    fn ordinary_icons_get_no_width_note() {
-        let page = render(&[icon("square", '\u{e900}')], "Icons", classes("icon"), "f.css");
-        assert!(page.contains("--aspect:1.000"));
-        assert!(!page.contains("× wide"));
-    }
+  #[test]
+  fn a_grouped_card_shows_the_leaf_name_and_the_full_class() {
+    // The heading already says "arrows", so repeating it in the title would
+    // just be noise; the class still carries the complete name.
+    let page = render(
+      &[grouped("left", '\u{e901}', Some("arrows"))],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    assert!(page.contains(">left</span>"), "card title is the leaf");
+    assert!(page.contains(">.icon-arrows-left</button>"));
+    assert!(page.contains(r#"data-copy="icon-arrows-left""#));
+  }
 
-    #[test]
-    fn pulls_tailwind_from_the_cdn_so_the_page_needs_no_build() {
-        let page = render(&[icon("ok", '\u{e900}')], "Icons", classes("icon"), "f.css");
-        assert!(page.contains(&format!(r#"<script src="{TAILWIND_CDN}"></script>"#)));
-    }
+  #[test]
+  fn subfolders_become_labeled_sections() {
+    let icons = vec![
+      icon("loose", '\u{e900}'),
+      grouped("left", '\u{e901}', Some("arrows")),
+      grouped("right", '\u{e902}', Some("arrows")),
+      grouped("share", '\u{e903}', Some("social")),
+    ];
+    let page = render(&icons, "Icons", classes("icon"), "f.css");
 
-    #[test]
-    fn search_index_covers_name_class_and_code() {
-        let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes("icon"), "f.css");
-        assert!(page.contains(r#"data-search="arrow-left icon-arrow-left e900""#));
-    }
+    // One section per group, plus the unlabeled one for top-level icons.
+    assert_eq!(page.matches("<section").count(), 3);
+    assert!(page.contains(r#"data-group="arrows""#));
+    assert!(page.contains(r#"data-group="social""#));
+    assert!(page.contains(">arrows</h2>"));
+    assert!(page.contains(">social</h2>"));
+    // Top-level icons sit in a section with no heading.
+    assert!(page.contains(r#"data-group=""#));
+    assert_eq!(page.matches("<h2").count(), 2);
+  }
 
-    #[test]
-    fn a_grouped_card_shows_the_leaf_name_and_the_full_class() {
-        // The heading already says "arrows", so repeating it in the title would
-        // just be noise; the class still carries the complete name.
-        let page = render(
-            &[grouped("left", '\u{e901}', Some("arrows"))],
-            "Icons",
-            classes("icon"),
-            "f.css",
-        );
-        assert!(page.contains(">left</span>"), "card title is the leaf");
-        assert!(page.contains(">.icon-arrows-left</button>"));
-        assert!(page.contains(r#"data-copy="icon-arrows-left""#));
-    }
+  #[test]
+  fn a_flat_folder_still_renders_one_unlabeled_section() {
+    let page = render(
+      &[icon("only", '\u{e900}')],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    assert_eq!(page.matches("<section").count(), 1);
+    assert!(!page.contains("<h2"));
+  }
 
-    #[test]
-    fn subfolders_become_labeled_sections() {
-        let icons = vec![
-            icon("loose", '\u{e900}'),
-            grouped("left", '\u{e901}', Some("arrows")),
-            grouped("right", '\u{e902}', Some("arrows")),
-            grouped("share", '\u{e903}', Some("social")),
-        ];
-        let page = render(&icons, "Icons", classes("icon"), "f.css");
+  #[test]
+  fn the_group_is_searchable() {
+    let page = render(
+      &[grouped("left", '\u{e900}', Some("arrows"))],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    assert!(page.contains(r#"data-search="arrows-left icon-arrows-left e900 arrows""#));
+  }
 
-        // One section per group, plus the unlabeled one for top-level icons.
-        assert_eq!(page.matches("<section").count(), 3);
-        assert!(page.contains(r#"data-group="arrows""#));
-        assert!(page.contains(r#"data-group="social""#));
-        assert!(page.contains(">arrows</h2>"));
-        assert!(page.contains(">social</h2>"));
-        // Top-level icons sit in a section with no heading.
-        assert!(page.contains(r#"data-group=""#));
-        assert_eq!(page.matches("<h2").count(), 2);
-    }
-
-    #[test]
-    fn a_flat_folder_still_renders_one_unlabeled_section() {
-        let page = render(&[icon("only", '\u{e900}')], "Icons", classes("icon"), "f.css");
-        assert_eq!(page.matches("<section").count(), 1);
-        assert!(!page.contains("<h2"));
-    }
-
-    #[test]
-    fn the_group_is_searchable() {
-        let page = render(
-            &[grouped("left", '\u{e900}', Some("arrows"))],
-            "Icons",
-            classes("icon"),
-            "f.css",
-        );
-        assert!(page.contains(r#"data-search="arrows-left icon-arrows-left e900 arrows""#));
-    }
-
-    #[test]
-    fn markup_from_user_supplied_names_is_escaped() {
-        let page = render(
-            &[icon("ok", '\u{e900}')],
-            "<script>alert(1)</script>",
-            classes("icon"),
-            "f.css",
-        );
-        assert!(!page.contains("<script>alert(1)</script>"));
-        assert!(page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
-    }
+  #[test]
+  fn markup_from_user_supplied_names_is_escaped() {
+    let page = render(
+      &[icon("ok", '\u{e900}')],
+      "<script>alert(1)</script>",
+      classes("icon"),
+      "f.css",
+    );
+    assert!(!page.contains("<script>alert(1)</script>"));
+    assert!(page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+  }
 }
