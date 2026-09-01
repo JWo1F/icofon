@@ -1,7 +1,15 @@
 {
   "codepoints": {
+    "ai-background": "e90a",
+    "ai-concert": "e90b",
+    "alert": "e907",
+    "analytics": "e908",
     "badge-colour": "e905",
     "bars-wide-bar": "e901",
+    "brackets": "e909",
+    "brands-github": "e90c",
+    "brands-google-drive": "e90d",
+    "brands-telegram": "e90e",
     "check": "e900",
     "shapes-blocks": "e902",
     "shapes-evenodd-donut": "e903",

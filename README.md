@@ -332,7 +332,7 @@ icofon examples/icons dist/icons.ttf --font-family "My Icons" --prefix ico
 ```
 
 ```
-6 icons -> dist/icons.ttf + dist/icons.css + dist/example.html + examples/icons/icofon.json
+16 icons -> dist/icons.ttf + dist/icons.css + dist/example.html + examples/icons/icofon.json
 ```
 
 ## Contributing
