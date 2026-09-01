@@ -29,9 +29,55 @@ Drop the first two on a page and the icons are available as CSS classes:
 
 ## Install
 
+Homebrew:
+
+```bash
+brew install jwo1f/tap/icofon
+```
+
+crates.io:
+
+```bash
+cargo install icofon
+```
+
+From a clone:
+
 ```bash
 cargo install --path .
 ```
+
+## CSS classes
+
+By default the stylesheet matches **any** class starting with the prefix:
+
+```css
+[class^="icon-"],
+[class*=" icon-"] { font-family: 'font'; ... }
+.icon-arrow-left::before { content: "\e900"; }
+```
+
+One class per icon, and nothing to remember. The cost is that the whole
+`icon-*` namespace now belongs to the font: a class of your own that happens to
+start the same way — a `.icon-button` wrapper, a utility class from a framework
+— quietly picks up the icon font.
+
+`--base-class` trades the shorthand for a scope. The prefix becomes a class in
+its own right, and every rule requires it:
+
+```css
+.icon { font-family: 'font'; ... }
+.icon.icon-arrow-left::before { content: "\e900"; }
+```
+
+```html
+<span class="icon icon-arrow-left"></span>
+```
+
+Nothing is claimed by name alone, so your own `icon-*` classes are left alone.
+Use it when the font is dropped into a codebase you do not fully control, or
+when the prefix is a common word. `--prefix` changes the word itself and both
+styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-left"`.
 
 ## What it does with your SVGs
 
@@ -271,6 +317,8 @@ icofon <INPUT> <OUTPUT> [OPTIONS]
                         instead of failing the build
   --font-family <NAME>  Family name in the font and the CSS (default: output file name)
   --prefix <PREFIX>     CSS class prefix (default: icon)
+  --base-class          Require the prefix as its own class: class="icon icon-arrow-left".
+                        Scopes every rule instead of claiming all of `icon-*`
   --start <HEX>         First codepoint to assign (default: e900)
 ```
 
@@ -286,3 +334,25 @@ icofon examples/icons dist/icons.ttf --font-family "My Icons" --prefix ico
 ```
 6 icons -> dist/icons.ttf + dist/icons.css + dist/example.html + examples/icons/icofon.json
 ```
+
+## Contributing
+
+Bug reports and pull requests are welcome at
+<https://github.com/JWo1F/icofon>. `cargo test` covers the SVG conversion, the
+codepoint manifest, the stylesheet and the preview page; a change to any of
+those should come with a test that fails without it.
+
+Because a font is compiled output, the useful check on a conversion change is
+what it does to a real icon set: build one before and after, and say in the
+commit message how many icons changed and which. Builds are reproducible, so
+the icons that should not have moved will be byte-identical.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Free to use, modify, redistribute and ship in
+commercial work. The one condition is attribution: keep the copyright notice
+and the license text in any copy or substantial portion, including in forks and
+modified versions, so the original stays credited.
+
+Releasing a new version, and publishing it to Homebrew, is described in
+[RELEASING.md](RELEASING.md).
