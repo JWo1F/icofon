@@ -1,6 +1,9 @@
 //! The stylesheet that makes the generated font usable from HTML.
 
+mod sheet;
+
 use crate::font::Icon;
+use sheet::{Selector, Sheet, Value};
 
 /// How an icon is named in HTML, and so how the stylesheet selects it.
 ///
@@ -30,12 +33,29 @@ impl Classes<'_> {
   }
 
   /// The selector matching an element that carries [`Classes::attr`].
-  pub fn selector(&self, name: &str) -> String {
+  pub fn selector(&self, name: &str) -> Selector {
+    let icon = Selector::class(&format!("{}-{name}", self.prefix));
+    if self.base_class {
+      Selector::class(self.prefix).and(icon)
+    } else {
+      icon
+    }
+  }
+
+  /// The selectors the base font rules hang on.
+  ///
+  /// With a base class there is one class to hang them on. Without one, match
+  /// both `class="icon-foo"` and `class="btn icon-foo"`, so the rules apply
+  /// without having to also write the bare `.icon` class.
+  fn base_selectors(&self) -> Vec<Selector> {
     let prefix = self.prefix;
     if self.base_class {
-      format!(".{prefix}.{prefix}-{name}")
+      vec![Selector::class(prefix)]
     } else {
-      format!(".{prefix}-{name}")
+      vec![
+        Selector::attribute_starts_with("class", &format!("{prefix}-")),
+        Selector::attribute_contains("class", &format!(" {prefix}-")),
+      ]
     }
   }
 }
@@ -46,50 +66,45 @@ impl Classes<'_> {
 /// file's name so that the CSS works wherever the two files are copied to
 /// together.
 pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, font_url: &str) -> String {
-  let prefix = classes.prefix;
-  let mut css = String::new();
+  let mut sheet = Sheet::new();
 
-  css.push_str(&format!(
-    "@font-face {{\n  \
-           font-family: '{family}';\n  \
-           src: url('{font_url}') format('truetype');\n  \
-           font-weight: normal;\n  \
-           font-style: normal;\n  \
-           font-display: block;\n\
-         }}\n\n"
-  ));
+  sheet.at_rule("font-face", |block| {
+    block.set("font-family", Value::quoted(family));
+    block.set(
+      "src",
+      Value::list([
+        Value::url(font_url),
+        Value::call("format", Value::quoted("truetype")),
+      ]),
+    );
+    block.set("font-weight", Value::keyword("normal"));
+    block.set("font-style", Value::keyword("normal"));
+    block.set("font-display", Value::keyword("block"));
+  });
+  sheet.blank_line();
 
-  // With a base class there is one class to hang the font rules on. Without
-  // one, match both `class="icon-foo"` and `class="btn icon-foo"` so the
-  // rules apply without having to also write the bare `.icon` class.
-  let base_selector = if classes.base_class {
-    format!(".{prefix}")
-  } else {
-    format!("[class^=\"{prefix}-\"],\n[class*=\" {prefix}-\"]")
-  };
-  css.push_str(&format!(
-    "{base_selector} {{\n  \
-           font-family: '{family}' !important;\n  \
-           font-style: normal;\n  \
-           font-weight: normal;\n  \
-           font-variant: normal;\n  \
-           text-transform: none;\n  \
-           line-height: 1;\n  \
-           speak: never;\n  \
-           -webkit-font-smoothing: antialiased;\n  \
-           -moz-osx-font-smoothing: grayscale;\n\
-         }}\n\n"
-  ));
+  sheet.rule(classes.base_selectors(), |block| {
+    // The family has to win against whatever the surrounding page sets on the
+    // element, which is usually a utility class with a higher specificity.
+    block.set_important("font-family", Value::quoted(family));
+    block.set("font-style", Value::keyword("normal"));
+    block.set("font-weight", Value::keyword("normal"));
+    block.set("font-variant", Value::keyword("normal"));
+    block.set("text-transform", Value::keyword("none"));
+    block.set("line-height", Value::keyword("1"));
+    block.set("speak", Value::keyword("never"));
+    block.set("-webkit-font-smoothing", Value::keyword("antialiased"));
+    block.set("-moz-osx-font-smoothing", Value::keyword("grayscale"));
+  });
+  sheet.blank_line();
 
   for icon in icons {
-    css.push_str(&format!(
-      "{selector}::before {{\n  content: \"\\{code:x}\";\n}}\n",
-      selector = classes.selector(&icon.name),
-      code = icon.codepoint as u32,
-    ));
+    sheet.rule([classes.selector(&icon.name).before()], |block| {
+      block.set("content", Value::glyph(icon.codepoint));
+    });
   }
 
-  css
+  sheet.finish()
 }
 
 #[cfg(test)]
@@ -140,19 +155,36 @@ mod tests {
   }
 
   #[test]
+  fn a_family_name_cannot_break_out_of_the_declaration_it_sits_in() {
+    let classes = Classes {
+      prefix: "icon",
+      base_class: false,
+    };
+    // A quote would otherwise end the string, and the `}` would end the rule,
+    // leaving whatever follows to be read as CSS of its own.
+    let hostile = "My ' Icons; } body{display:none";
+    let css = render(&[icon("check", '\u{e900}')], hostile, classes, "f.ttf");
+
+    assert!(css.contains(r"font-family: 'My \' Icons; } body{display:none';"));
+    // One `@font-face`, one base rule, one icon rule -- and nothing else.
+    assert_eq!(css.matches('{').count(), css.matches('}').count());
+    assert!(!css.contains("body{display:none;"));
+  }
+
+  #[test]
   fn markup_and_selector_agree_in_both_modes() {
     let bare = Classes {
       prefix: "ico",
       base_class: false,
     };
     assert_eq!(bare.attr("star"), "ico-star");
-    assert_eq!(bare.selector("star"), ".ico-star");
+    assert_eq!(bare.selector("star").to_string(), ".ico-star");
 
     let based = Classes {
       prefix: "ico",
       base_class: true,
     };
     assert_eq!(based.attr("star"), "ico ico-star");
-    assert_eq!(based.selector("star"), ".ico.ico-star");
+    assert_eq!(based.selector("star").to_string(), ".ico.ico-star");
   }
 }

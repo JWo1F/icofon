@@ -1,0 +1,7 @@
+  /* Drive dark mode from the toggle rather than the OS, so an icon can be
+     checked on both backgrounds without changing system settings. */
+  @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+  @theme {
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+  }

@@ -8,6 +8,15 @@ use crate::svg::Coloring;
 /// page needs no build step of its own.
 const TAILWIND_CDN: &str = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4";
 
+/// Tailwind's own configuration: the dark-mode variant and the two font
+/// families the page sets. Kept as CSS so it stays readable and editable as
+/// CSS; nothing in it is generated.
+const THEME_CSS: &str = include_str!("../assets/preview-theme.css");
+
+/// The page's own styling, on top of Tailwind's utilities. Also entirely
+/// static — it is included verbatim.
+const PREVIEW_CSS: &str = include_str!("../assets/preview.css");
+
 /// Render `example.html`: a searchable grid of every icon, showing its glyph,
 /// name, CSS class and codepoint.
 ///
@@ -30,74 +39,9 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script src="{tailwind}"></script>
 <style type="text/tailwindcss">
-  /* Drive dark mode from the toggle rather than the OS, so an icon can be
-     checked on both backgrounds without changing system settings. */
-  @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
-  @theme {{
-    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    --font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
-  }}
-</style>
+{theme_css}</style>
 <style>
-  :root {{ --bar: #ffffff; --hair: rgba(9,9,11,.10); }}
-  [data-theme="dark"] {{ --bar: #09090b; --hair: rgba(250,250,250,.14); }}
-
-  /* An icon is one em tall but may be many ems wide, so each card is measured
-     and the glyph is scaled down by its own width to fit. Square icons are
-     unaffected: their --aspect is 1. */
-  .card {{ container-type: inline-size; }}
-  .glyph {{
-    font-size: min(2.25rem, calc((100cqw - 1.5rem) / var(--aspect, 1)));
-    /* Only the glyphs follow the color picker; labels stay readable. */
-    color: var(--icon-color, inherit);
-  }}
-
-  /* The bar must not change height when it sticks. It is in normal flow, so a
-     height change shifts everything below it, the browser's scroll anchoring
-     compensates by moving the scroll position, and that flips the sentinel
-     back — a loop that reads as the page fighting you on small scrolls. Only
-     the background and the mini title change here, neither of which reflows. */
-  #bar {{ transition: background-color .25s ease; }}
-  #bar[data-stuck] {{
-    background: color-mix(in srgb, var(--bar) 88%, transparent);
-    backdrop-filter: saturate(1.4) blur(14px);
-  }}
-  /* Revealed by width, which cannot change the bar's height. */
-  #mini {{
-    max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
-    /* The row gap still applies around a zero-width item, which would indent
-       the search box away from the labels below it. */
-    margin-right: -1.25rem;
-    transition: max-width .3s ease, opacity .2s ease, margin .3s ease;
-  }}
-  #bar[data-stuck] #mini {{ max-width: 14rem; opacity: 1; margin-right: .25rem; }}
-
-  /* A hairline that fades out at both ends, so the bar sits on the page
-     instead of being boxed in by it. */
-  .hairline {{ height: 1px; background: linear-gradient(90deg, transparent, var(--hair) 12%, var(--hair) 88%, transparent); }}
-
-  /* A color input is a bordered square by default. It is made round, and then
-     ringed in spectrum so it reads as "choose any color" rather than as one
-     more preset to pick from. */
-  #picker {{
-    -webkit-appearance: none; appearance: none;
-    padding: 0; border: none; background: none;
-    border-radius: 9999px; overflow: hidden;
-    width: 100%; height: 100%; display: block;
-  }}
-  #picker::-webkit-color-swatch-wrapper {{ padding: 0; }}
-  #picker::-webkit-color-swatch {{ border: none; border-radius: 9999px; }}
-  #picker::-moz-color-swatch {{ border: none; border-radius: 9999px; }}
-  .picker-ring {{
-    background: conic-gradient(from 200deg, #ef4444, #f59e0b, #facc15, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444);
-    padding: 2px; border-radius: 9999px; width: 1.6rem; height: 1.6rem;
-    display: grid; place-items: center; cursor: pointer;
-    transition: transform .15s ease;
-  }}
-  .picker-ring:hover {{ transform: scale(1.12); }}
-  .swatch {{ transition: transform .15s ease; }}
-  .swatch:hover {{ transform: scale(1.15); }}
-</style>
+{preview_css}</style>
 <script>
   // Set before first paint so the page does not flash the wrong background.
   // Light by default: icons are drawn for a white page, so that is the honest
@@ -176,6 +120,8 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
         family = family,
         css = escape(css_url),
         tailwind = TAILWIND_CDN,
+        theme_css = THEME_CSS,
+        preview_css = PREVIEW_CSS,
         total = icons.len(),
         kinds = kind_chips(icons),
         folders = folder_chips(icons),
@@ -345,7 +291,7 @@ fn card(icon: &Icon, classes: Classes<'_>) -> String {
   // What you would write in a `class` attribute, which is what the button
   // copies, and the selector that matches it, which is what it displays.
   let class = classes.attr(&icon.name);
-  let selector = classes.selector(&icon.name);
+  let selector = classes.selector(&icon.name).to_string();
   let code = icon.codepoint as u32;
   // How many ems wide the glyph is. A wide icon would otherwise run straight
   // out of its card, so the stylesheet divides the display size by this.

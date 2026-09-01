@@ -342,6 +342,11 @@ Bug reports and pull requests are welcome at
 codepoint manifest, the stylesheet and the preview page; a change to any of
 those should come with a test that fails without it.
 
+The generated stylesheet is built through the small CSS writer in
+`src/css/sheet.rs` rather than by formatting strings, so selectors and values
+are escaped as they are made. The preview page's own styling is plain CSS in
+`assets/`, included at compile time — edit it as CSS, not as a Rust literal.
+
 Run `cargo fmt` before committing. The project is formatted by rustfmt with
 `tab_spaces = 2` (see `rustfmt.toml`), rather than Rust's default four.
 
