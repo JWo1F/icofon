@@ -1,5 +1,6 @@
 //! A browsable preview page listing every icon in the generated font.
 
+use crate::css::Classes;
 use crate::font::Icon;
 use crate::svg::Coloring;
 
@@ -12,7 +13,7 @@ const TAILWIND_CDN: &str = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"
 ///
 /// `css_url` is the stylesheet's location relative to the page, so the preview
 /// exercises exactly the same CSS a site would use.
-pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> String {
+pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str) -> String {
     let family = escape(family);
     let mut page = String::new();
 
@@ -192,7 +193,7 @@ pub fn render(icons: &[Icon], family: &str, prefix: &str, css_url: &str) -> Stri
     for (group, members) in group_runs(icons) {
         page.push_str(&section_open(group));
         for icon in members {
-            page.push_str(&card(icon, prefix));
+            page.push_str(&card(icon, classes));
         }
         page.push_str("  </div>\n</section>\n");
     }
@@ -340,8 +341,11 @@ fn note(text: &str) -> String {
     )
 }
 
-fn card(icon: &Icon, prefix: &str) -> String {
-    let class = format!("{prefix}-{}", icon.name);
+fn card(icon: &Icon, classes: Classes<'_>) -> String {
+    // What you would write in a `class` attribute, which is what the button
+    // copies, and the selector that matches it, which is what it displays.
+    let class = classes.attr(&icon.name);
+    let selector = classes.selector(&icon.name);
     let code = icon.codepoint as u32;
     // How many ems wide the glyph is. A wide icon would otherwise run straight
     // out of its card, so the stylesheet divides the display size by this.
@@ -373,7 +377,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
                 class="name max-w-full cursor-pointer rounded-md px-1.5 py-0.5 font-mono text-[12px]
                        break-all text-zinc-500 hover:bg-blue-600/10 hover:text-blue-700
                        dark:text-zinc-400 dark:hover:bg-blue-400/15
-                       dark:hover:text-blue-300">.{class}</button>
+                       dark:hover:text-blue-300">{selector}</button>
         <code class="font-mono text-[11px] text-zinc-400 dark:text-zinc-500">U+{code:04X}</code>
       </figcaption>
     </figure>
@@ -398,6 +402,7 @@ fn card(icon: &Icon, prefix: &str) -> String {
             .join(" ")
         ),
         class = escape(&class),
+        selector = escape(&selector),
         name = escape(&icon.label),
         code = code,
         aspect = aspect,
@@ -602,6 +607,14 @@ mod tests {
     use super::*;
     use crate::svg;
 
+    /// The default naming: a single prefixed class per icon.
+    fn classes(prefix: &str) -> Classes<'_> {
+        Classes {
+            prefix,
+            base_class: false,
+        }
+    }
+
     fn icon(name: &str, codepoint: char) -> Icon {
         grouped(name, codepoint, None)
     }
@@ -627,9 +640,24 @@ mod tests {
     }
 
     #[test]
+    fn a_base_class_is_written_on_the_glyph_and_offered_for_copying() {
+        let classes = Classes {
+            prefix: "icon",
+            base_class: true,
+        };
+        let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes, "f.css");
+
+        assert!(page.contains(r#"<span class="glyph icon icon-arrow-left "#));
+        // The button copies what goes in a `class` attribute and shows the
+        // selector that matches it.
+        assert!(page.contains(r#"data-copy="icon icon-arrow-left""#));
+        assert!(page.contains(">.icon.icon-arrow-left</button>"));
+    }
+
+    #[test]
     fn lists_every_icon_with_its_class_and_codepoint() {
         let icons = vec![icon("arrow-left", '\u{e900}'), icon("star", '\u{e9f0}')];
-        let page = render(&icons, "My Icons", "ico", "icons.css");
+        let page = render(&icons, "My Icons", classes("ico"), "icons.css");
 
         assert!(page.contains(r#"<link rel="stylesheet" href="icons.css">"#));
         // Each card carries the glyph, the bare name, the class and the codepoint.
@@ -645,7 +673,7 @@ mod tests {
 
     #[test]
     fn the_header_offers_a_color_palette() {
-        let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
+        let page = render(&[icon("plain", '\u{e900}')], "Icons", classes("icon"), "f.css");
         for swatch in SWATCHES {
             assert!(
                 page.contains(&format!(r#"data-color="{swatch}""#)),
@@ -667,7 +695,7 @@ mod tests {
         // read the same as one that is fixed throughout.
         let mut mixed = icon("badge", '\u{e900}');
         mixed.outline.coloring = Coloring::Mixed;
-        let page = render(&[mixed], "Icons", "icon", "f.css");
+        let page = render(&[mixed], "Icons", classes("icon"), "f.css");
         assert!(page.contains("partly fixed"));
         assert!(
             page.contains("partly fixed mixed"),
@@ -676,7 +704,7 @@ mod tests {
 
         let mut fixed = icon("logo", '\u{e900}');
         fixed.outline.coloring = Coloring::Fixed;
-        let page = render(&[fixed], "Icons", "icon", "f.css");
+        let page = render(&[fixed], "Icons", classes("icon"), "f.css");
         assert!(page.contains(">fixed</code>"));
         assert!(page.contains("fixed color multicolor"));
     }
@@ -684,7 +712,7 @@ mod tests {
     #[test]
     fn a_one_color_icon_carries_no_warning() {
         // It behaves like every other glyph, so there is nothing to say.
-        let page = render(&[icon("plain", '\u{e900}')], "Icons", "icon", "f.css");
+        let page = render(&[icon("plain", '\u{e900}')], "Icons", classes("icon"), "f.css");
         assert!(!page.contains("partly fixed"));
         assert!(!page.contains(">fixed</code>"));
     }
@@ -693,7 +721,7 @@ mod tests {
     fn wide_icons_carry_their_aspect_so_the_card_can_shrink_them() {
         let mut wide = icon("wordmark", '\u{e900}');
         wide.outline.advance = 16_538;
-        let page = render(&[wide], "Icons", "icon", "f.css");
+        let page = render(&[wide], "Icons", classes("icon"), "f.css");
         assert!(
             page.contains("--aspect:16.538"),
             "the card is told how wide it is"
@@ -706,20 +734,20 @@ mod tests {
 
     #[test]
     fn ordinary_icons_get_no_width_note() {
-        let page = render(&[icon("square", '\u{e900}')], "Icons", "icon", "f.css");
+        let page = render(&[icon("square", '\u{e900}')], "Icons", classes("icon"), "f.css");
         assert!(page.contains("--aspect:1.000"));
         assert!(!page.contains("× wide"));
     }
 
     #[test]
     fn pulls_tailwind_from_the_cdn_so_the_page_needs_no_build() {
-        let page = render(&[icon("ok", '\u{e900}')], "Icons", "icon", "f.css");
+        let page = render(&[icon("ok", '\u{e900}')], "Icons", classes("icon"), "f.css");
         assert!(page.contains(&format!(r#"<script src="{TAILWIND_CDN}"></script>"#)));
     }
 
     #[test]
     fn search_index_covers_name_class_and_code() {
-        let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", "icon", "f.css");
+        let page = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes("icon"), "f.css");
         assert!(page.contains(r#"data-search="arrow-left icon-arrow-left e900""#));
     }
 
@@ -730,7 +758,7 @@ mod tests {
         let page = render(
             &[grouped("left", '\u{e901}', Some("arrows"))],
             "Icons",
-            "icon",
+            classes("icon"),
             "f.css",
         );
         assert!(page.contains(">left</span>"), "card title is the leaf");
@@ -746,7 +774,7 @@ mod tests {
             grouped("right", '\u{e902}', Some("arrows")),
             grouped("share", '\u{e903}', Some("social")),
         ];
-        let page = render(&icons, "Icons", "icon", "f.css");
+        let page = render(&icons, "Icons", classes("icon"), "f.css");
 
         // One section per group, plus the unlabeled one for top-level icons.
         assert_eq!(page.matches("<section").count(), 3);
@@ -761,7 +789,7 @@ mod tests {
 
     #[test]
     fn a_flat_folder_still_renders_one_unlabeled_section() {
-        let page = render(&[icon("only", '\u{e900}')], "Icons", "icon", "f.css");
+        let page = render(&[icon("only", '\u{e900}')], "Icons", classes("icon"), "f.css");
         assert_eq!(page.matches("<section").count(), 1);
         assert!(!page.contains("<h2"));
     }
@@ -771,7 +799,7 @@ mod tests {
         let page = render(
             &[grouped("left", '\u{e900}', Some("arrows"))],
             "Icons",
-            "icon",
+            classes("icon"),
             "f.css",
         );
         assert!(page.contains(r#"data-search="arrows-left icon-arrows-left e900 arrows""#));
@@ -782,7 +810,7 @@ mod tests {
         let page = render(
             &[icon("ok", '\u{e900}')],
             "<script>alert(1)</script>",
-            "icon",
+            classes("icon"),
             "f.css",
         );
         assert!(!page.contains("<script>alert(1)</script>"));

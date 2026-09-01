@@ -63,6 +63,13 @@ struct Args {
     #[arg(long, default_value = "icon", value_name = "PREFIX")]
     prefix: String,
 
+    /// Require the prefix as a class of its own, so an icon is written
+    /// `class="icon icon-arrow-left"`. Without this the stylesheet matches any
+    /// class starting with the prefix, which also claims classes of your own
+    /// that happen to start the same way.
+    #[arg(long)]
+    base_class: bool,
+
     /// First codepoint to assign, as hex. Defaults to the start of the Private
     /// Use Area block that icon fonts conventionally use.
     #[arg(long, default_value = "e900", value_name = "HEX", value_parser = parse_codepoint)]
@@ -105,6 +112,11 @@ fn main() -> Result<()> {
         None => Manifest::default(),
     };
 
+    let classes = css::Classes {
+        prefix: &args.prefix,
+        base_class: args.base_class,
+    };
+
     let icons = load_icons(&files, args.start, &manifest)?;
     let icons = triage(icons, args.skip_errors)?;
 
@@ -116,7 +128,7 @@ fn main() -> Result<()> {
     let font_url = relative_url(&css_path, &args.output);
     write(
         &css_path,
-        css::render(&icons, &family, &args.prefix, &font_url).as_bytes(),
+        css::render(&icons, &family, classes, &font_url).as_bytes(),
     )?;
 
     let mut written = format!("{} + {}", args.output.display(), css_path.display());
@@ -125,7 +137,7 @@ fn main() -> Result<()> {
         let css_url = relative_url(html_path, &css_path);
         write(
             html_path,
-            html::render(&icons, &family, &args.prefix, &css_url).as_bytes(),
+            html::render(&icons, &family, classes, &css_url).as_bytes(),
         )?;
         written.push_str(&format!(" + {}", html_path.display()));
     }
