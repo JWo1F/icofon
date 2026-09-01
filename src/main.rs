@@ -1,17 +1,20 @@
 //! icofon — build an icon font (TTF + CSS) from a folder of SVG files.
 
+mod config;
 mod css;
 mod font;
 mod html;
 mod manifest;
 mod svg;
+mod webfont;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
+use config::{Format, OnError};
 use font::Icon;
 use manifest::Manifest;
 
@@ -19,49 +22,50 @@ use manifest::Manifest;
 #[command(
   name = "icofon",
   version,
-  about = "Build an icon font and matching stylesheet from a folder of SVG files"
+  about = "Build an icon font, stylesheet and preview page from a folder of SVG files",
+  subcommand_required = true,
+  arg_required_else_help = true
 )]
-struct Args {
-  /// Folder containing the SVG icons.
-  input: PathBuf,
+struct Cli {
+  #[command(subcommand)]
+  command: Command,
+}
 
-  /// Path of the TrueType font to write.
-  output: PathBuf,
+#[derive(Subcommand)]
+enum Command {
+  /// Build the fonts, the stylesheet and the preview page.
+  Build(BuildArgs),
+  /// Write an icofon.toml holding the settings this build would use.
+  Init(InitArgs),
+  /// Convert every icon and report, without writing anything.
+  Check(BuildArgs),
+  /// Build, then build again whenever an icon changes.
+  Watch(BuildArgs),
+}
 
-  /// Path of the stylesheet to write (defaults to the font path with a .css extension).
-  #[arg(long, value_name = "PATH")]
-  css: Option<PathBuf>,
+/// Flags shared by build, check and watch. Every one is optional: what is not
+/// given here comes from icofon.toml, and what neither gives comes from the
+/// defaults in `settings`.
+#[derive(clap::Args, Clone)]
+struct BuildArgs {
+  /// Folder holding the SVG icons.
+  source: Option<PathBuf>,
 
-  /// Path of the preview page to write (defaults to example.html beside the stylesheet).
-  #[arg(long, value_name = "PATH")]
-  html: Option<PathBuf>,
+  /// Folder to write the fonts, stylesheet and preview page into.
+  #[arg(short, long, value_name = "DIR")]
+  out: Option<PathBuf>,
 
-  /// Skip writing the preview page.
-  #[arg(long, conflicts_with = "html")]
-  no_html: bool,
-
-  /// Path of the codepoint manifest, which keeps codepoints stable across
-  /// builds (defaults to icofon.json inside the icon folder).
-  #[arg(long, value_name = "PATH")]
-  manifest: Option<PathBuf>,
-
-  /// Do not read or write the codepoint manifest. Codepoints are then assigned
-  /// from scratch on every build and will move as icons are added.
-  #[arg(long, conflicts_with = "manifest")]
-  no_manifest: bool,
-
-  /// Leave out icons that cannot be turned into a glyph instead of failing.
-  /// What was left out is reported on stderr.
-  #[arg(long)]
-  skip_errors: bool,
-
-  /// Font family name used in the font and in the CSS (defaults to the font file name).
+  /// Base name for the generated files, and the font family name.
   #[arg(long, value_name = "NAME")]
-  font_family: Option<String>,
+  name: Option<String>,
+
+  /// Font containers to write, smallest first in the stylesheet.
+  #[arg(long, value_delimiter = ',', value_name = "LIST")]
+  formats: Option<Vec<Format>>,
 
   /// Prefix for the generated CSS classes.
-  #[arg(long, default_value = "icon", value_name = "PREFIX")]
-  prefix: String,
+  #[arg(long, value_name = "PREFIX")]
+  prefix: Option<String>,
 
   /// Require the prefix as a class of its own, so an icon is written
   /// `class="icon icon-arrow-left"`. Without this the stylesheet matches any
@@ -70,89 +74,345 @@ struct Args {
   #[arg(long)]
   base_class: bool,
 
+  /// Skip the preview page.
+  #[arg(long)]
+  no_preview: bool,
+
+  /// Path of the codepoint manifest, which keeps codepoints stable across
+  /// builds. Defaults to icofon.json inside the icon folder.
+  #[arg(long, value_name = "PATH")]
+  manifest: Option<PathBuf>,
+
+  /// Assign codepoints from scratch every build instead of keeping a manifest.
+  /// They will move as icons are added, which breaks pages already using the
+  /// font.
+  #[arg(long, conflicts_with = "manifest")]
+  no_manifest: bool,
+
+  /// What to do about an icon that cannot become a glyph.
+  #[arg(long, value_name = "WHAT")]
+  on_error: Option<OnError>,
+
   /// First codepoint to assign, as hex. Defaults to the start of the Private
   /// Use Area block that icon fonts conventionally use.
-  #[arg(long, default_value = "e900", value_name = "HEX", value_parser = parse_codepoint)]
-  start: char,
+  #[arg(long, value_name = "HEX")]
+  start: Option<String>,
+
+  /// Read this config file instead of looking for icofon.toml.
+  #[arg(long, value_name = "PATH")]
+  config: Option<PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct InitArgs {
+  /// Folder holding the SVG icons.
+  source: Option<PathBuf>,
+
+  /// Folder to write the fonts, stylesheet and preview page into.
+  #[arg(short, long, value_name = "DIR")]
+  out: Option<PathBuf>,
+
+  /// Overwrite an existing icofon.toml.
+  #[arg(long)]
+  force: bool,
 }
 
 fn main() -> Result<()> {
-  let args = Args::parse();
+  match Cli::parse().command {
+    Command::Build(args) => {
+      let report = build(&settings(&args)?, Write::Files)?;
+      println!("{report}");
+      Ok(())
+    }
+    Command::Check(args) => {
+      let report = build(&settings(&args)?, Write::Nothing)?;
+      println!("{report}");
+      Ok(())
+    }
+    Command::Watch(args) => watch(&settings(&args)?),
+    Command::Init(args) => init(&args),
+  }
+}
 
-  let files = collect_svgs(&args.input)?;
+/// Merge the defaults, the config file and the flags into one set of settings.
+fn settings(args: &BuildArgs) -> Result<config::Build> {
+  let cwd = std::env::current_dir()?;
+  let (file, base) = match &args.config {
+    Some(path) => {
+      let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+      (config::File::load(path)?, dir)
+    }
+    None => match config::File::discover(&cwd)? {
+      Some((file, dir)) => (file, dir),
+      None => (config::File::default(), cwd.clone()),
+    },
+  };
+
+  // Paths in the file are relative to the file, so a build behaves the same
+  // from any directory in the project.
+  let rooted = |path: PathBuf| {
+    if path.is_absolute() {
+      path
+    } else {
+      base.join(path)
+    }
+  };
+
+  let source = args
+    .source
+    .clone()
+    .or_else(|| file.source.clone().map(&rooted))
+    .context("no icon folder given, and no source set in icofon.toml")?;
+  let out = args
+    .out
+    .clone()
+    .or_else(|| file.out.clone().map(&rooted))
+    .unwrap_or_else(|| PathBuf::from("dist"));
+  let name = args
+    .name
+    .clone()
+    .or_else(|| file.name.clone())
+    .or_else(|| file_stem(&source))
+    .unwrap_or_else(|| "icofon".to_string());
+
+  let manifest = if args.no_manifest || file.manifest == Some(false) {
+    None
+  } else {
+    Some(
+      args
+        .manifest
+        .clone()
+        .or_else(|| file.manifest_path.clone().map(&rooted))
+        .unwrap_or_else(|| source.join(manifest::DEFAULT_FILE)),
+    )
+  };
+
+  let start = match args.start.clone().or_else(|| file.start.clone()) {
+    Some(hex) => parse_codepoint(&hex).map_err(anyhow::Error::msg)?,
+    None => '\u{e900}',
+  };
+
+  Ok(config::Build {
+    source,
+    out,
+    name,
+    formats: args
+      .formats
+      .clone()
+      .or(file.formats)
+      .unwrap_or_else(|| vec![Format::Woff2, Format::Woff, Format::Ttf]),
+    prefix: args
+      .prefix
+      .clone()
+      .or(file.prefix)
+      .unwrap_or_else(|| "icon".to_string()),
+    base_class: args.base_class || file.base_class.unwrap_or(false),
+    preview: !args.no_preview && file.preview.unwrap_or(true),
+    manifest,
+    start,
+    on_error: args.on_error.or(file.on_error).unwrap_or(OnError::Fail),
+  })
+}
+
+/// Whether a build writes its results or only reports them.
+#[derive(Clone, Copy, PartialEq)]
+enum Write {
+  Files,
+  Nothing,
+}
+
+/// What a build produced, in the shape it is printed.
+struct Report {
+  icons: usize,
+  wrote: Vec<(PathBuf, usize)>,
+  checked_only: bool,
+}
+
+impl std::fmt::Display for Report {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    if self.checked_only {
+      return write!(f, "{} icons convert cleanly", self.icons);
+    }
+    writeln!(f, "{} icons", self.icons)?;
+    for (path, size) in &self.wrote {
+      writeln!(f, "  {:<28} {}", short(path), human(*size))?;
+    }
+    Ok(())
+  }
+}
+
+/// A path as it is worth reading back: relative to where the command was run,
+/// since an absolute path from the config file tells the reader nothing.
+fn short(path: &Path) -> String {
+  let cleaned: PathBuf = path
+    .components()
+    .filter(|part| !matches!(part, std::path::Component::CurDir))
+    .collect();
+  std::env::current_dir()
+    .ok()
+    .and_then(|cwd| cleaned.strip_prefix(&cwd).ok().map(Path::to_path_buf))
+    .unwrap_or(cleaned)
+    .display()
+    .to_string()
+}
+
+fn human(bytes: usize) -> String {
+  if bytes < 1024 {
+    format!("{bytes} B")
+  } else {
+    format!("{:.1} KB", bytes as f64 / 1024.0)
+  }
+}
+
+/// Read the icons, build every requested format, and write what was asked for.
+fn build(settings: &config::Build, write_mode: Write) -> Result<Report> {
+  let files = collect_svgs(&settings.source)?;
   if files.is_empty() {
-    bail!("no .svg files found in {}", args.input.display());
+    bail!("no .svg files found in {}", settings.source.display());
   }
 
-  let family = args
-    .font_family
-    .clone()
-    .or_else(|| file_stem(&args.output))
-    .unwrap_or_else(|| "icofon".to_string());
-  let css_path = args
-    .css
-    .clone()
-    .unwrap_or_else(|| args.output.with_extension("css"));
-  let html_path = (!args.no_html).then(|| {
-    args.html.clone().unwrap_or_else(|| {
-      css_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("example.html")
-    })
-  });
-
-  let manifest_path = (!args.no_manifest).then(|| {
-    args
-      .manifest
-      .clone()
-      .unwrap_or_else(|| args.input.join(manifest::DEFAULT_FILE))
-  });
-  let mut manifest = match &manifest_path {
+  let mut manifest = match &settings.manifest {
     Some(path) => Manifest::load(path)?,
     None => Manifest::default(),
   };
 
-  let classes = css::Classes {
-    prefix: &args.prefix,
-    base_class: args.base_class,
-  };
+  let icons = load_icons(&files, settings.start, &manifest)?;
+  let icons = triage(icons, settings.on_error == OnError::Skip)?;
 
-  let icons = load_icons(&files, args.start, &manifest)?;
-  let icons = triage(icons, args.skip_errors)?;
-
-  let font = font::build(&icons, &family)?;
-  write(&args.output, &font)?;
-  // Both paths must exist before the url between them can be resolved, so the
-  // stylesheet's directory is created up front rather than at write time.
-  ensure_parent(&css_path)?;
-  let font_url = relative_url(&css_path, &args.output);
-  write(
-    &css_path,
-    css::render(&icons, &family, classes, &font_url).as_bytes(),
-  )?;
-
-  let mut written = format!("{} + {}", args.output.display(), css_path.display());
-  if let Some(html_path) = &html_path {
-    ensure_parent(html_path)?;
-    let css_url = relative_url(html_path, &css_path);
-    write(
-      html_path,
-      html::render(&icons, &family, classes, &css_url).as_bytes(),
-    )?;
-    written.push_str(&format!(" + {}", html_path.display()));
+  if write_mode == Write::Nothing {
+    return Ok(Report {
+      icons: icons.len(),
+      wrote: Vec::new(),
+      checked_only: true,
+    });
   }
 
-  if let Some(manifest_path) = &manifest_path {
+  let classes = css::Classes {
+    prefix: &settings.prefix,
+    base_class: settings.base_class,
+  };
+  let formats = settings.ordered_formats();
+
+  let ttf = font::build(&icons, &settings.name)?;
+  let css_path = settings.css_path();
+  // Every path has to exist before the urls between them can be resolved.
+  ensure_parent(&css_path)?;
+
+  let mut wrote = Vec::new();
+  let mut urls = Vec::new();
+  for format in &formats {
+    let bytes = match format {
+      Format::Ttf => ttf.clone(),
+      Format::Woff => webfont::woff(&ttf)?,
+      Format::Woff2 => webfont::woff2(&ttf)?,
+    };
+    let path = settings.font_path(*format);
+    write(&path, &bytes)?;
+    urls.push((relative_url(&css_path, &path), format.css_format()));
+    wrote.push((path, bytes.len()));
+  }
+
+  let sources: Vec<css::Source<'_>> = urls
+    .iter()
+    .map(|(url, format)| css::Source { url, format })
+    .collect();
+  let stylesheet = css::render(&icons, &settings.name, classes, &sources);
+  write(&css_path, stylesheet.as_bytes())?;
+  wrote.push((css_path.clone(), stylesheet.len()));
+
+  if settings.preview {
+    let path = settings.preview_path();
+    ensure_parent(&path)?;
+    let css_url = relative_url(&path, &css_path);
+    let page = html::render(&icons, &settings.name, classes, &css_url);
+    write(&path, page.as_bytes())?;
+    wrote.push((path, page.len()));
+  }
+
+  if let Some(path) = &settings.manifest {
     for icon in &icons {
       manifest.insert(&icon.name, icon.codepoint);
     }
-    ensure_parent(manifest_path)?;
-    manifest.save(manifest_path)?;
-    written.push_str(&format!(" + {}", manifest_path.display()));
+    ensure_parent(path)?;
+    manifest.save(path)?;
+    let size = std::fs::metadata(path)
+      .map(|m| m.len() as usize)
+      .unwrap_or(0);
+    wrote.push((path.clone(), size));
   }
 
-  println!("{} icons -> {written}", icons.len());
+  Ok(Report {
+    icons: icons.len(),
+    wrote,
+    checked_only: false,
+  })
+}
+
+/// Build once, then rebuild on every change under the icon folder.
+fn watch(settings: &config::Build) -> Result<()> {
+  use notify::{RecursiveMode, Watcher};
+
+  match build(settings, Write::Files) {
+    Ok(report) => println!("{report}"),
+    Err(error) => eprintln!("{error:?}"),
+  }
+
+  let (tx, rx) = std::sync::mpsc::channel();
+  let mut watcher = notify::recommended_watcher(move |event| {
+    let _ = tx.send(event);
+  })?;
+  watcher.watch(&settings.source, RecursiveMode::Recursive)?;
+  println!("watching {} — ^C to stop", settings.source.display());
+
+  loop {
+    // Editors touch a file several times per save, so wait for the flurry to
+    // stop before building rather than building once per event.
+    let first = rx.recv();
+    if first.is_err() {
+      break;
+    }
+    while rx
+      .recv_timeout(std::time::Duration::from_millis(150))
+      .is_ok()
+    {}
+
+    match build(settings, Write::Files) {
+      Ok(report) => println!("{report}"),
+      Err(error) => eprintln!("{error:?}"),
+    }
+  }
+  Ok(())
+}
+
+/// Write an icofon.toml describing what a build would do right now.
+fn init(args: &InitArgs) -> Result<()> {
+  let path = PathBuf::from(config::FILE);
+  if path.exists() && !args.force {
+    bail!(
+      "{} already exists — pass --force to overwrite",
+      path.display()
+    );
+  }
+
+  let source: PathBuf = args
+    .source
+    .clone()
+    .unwrap_or_else(|| PathBuf::from("icons"))
+    .components()
+    .filter(|part| !matches!(part, std::path::Component::CurDir))
+    .collect();
+  let file = config::File {
+    source: Some(source.clone()),
+    out: Some(args.out.clone().unwrap_or_else(|| PathBuf::from("dist"))),
+    name: file_stem(&source),
+    formats: Some(vec![Format::Woff2, Format::Woff, Format::Ttf]),
+    prefix: Some("icon".to_string()),
+    ..config::File::default()
+  };
+
+  let toml = toml::to_string_pretty(&file)?;
+  std::fs::write(&path, &toml)?;
+  println!("wrote {}", path.display());
   Ok(())
 }
 

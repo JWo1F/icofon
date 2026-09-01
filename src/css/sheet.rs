@@ -39,10 +39,17 @@ impl Value {
     Value(format!("\"\\{:x}\"", c as u32))
   }
 
-  /// Several values separated by spaces, as `src` takes them.
+  /// Several values separated by spaces, as one `src` entry takes them.
   pub fn list(parts: impl IntoIterator<Item = Value>) -> Value {
     let parts: Vec<String> = parts.into_iter().map(|part| part.0).collect();
     Value(parts.join(" "))
+  }
+
+  /// Alternatives separated by commas, as `src` takes a list of font files.
+  /// Each goes on its own line, since one per line is how these are read.
+  pub fn comma_list(parts: impl IntoIterator<Item = Value>) -> Value {
+    let parts: Vec<String> = parts.into_iter().map(|part| part.0).collect();
+    Value(parts.join(",\n       "))
   }
 }
 

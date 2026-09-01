@@ -19,6 +19,10 @@ usvg = { version = "0.48", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 write-fonts = "0.52"
+flate2 = "1.1.10"
+brotli = "8.0.4"
+toml = "1.1.4"
+notify = "8.2.0"
 
 [dev-dependencies]
 read-fonts = "0.43"

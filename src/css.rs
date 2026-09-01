@@ -60,22 +60,37 @@ impl Classes<'_> {
   }
 }
 
+/// One font file the stylesheet can point at.
+pub struct Source<'a> {
+  /// Where the file sits relative to the stylesheet.
+  pub url: &'a str,
+  /// What CSS calls the container: `woff2`, `woff`, `truetype`.
+  pub format: &'a str,
+}
+
 /// Render the stylesheet for `icons`.
 ///
-/// `font_url` is what goes into `src: url(...)`, and is normally just the font
-/// file's name so that the CSS works wherever the two files are copied to
-/// together.
-pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, font_url: &str) -> String {
+/// `sources` are the font files, smallest first. A browser walks the list and
+/// takes the first container it understands, so the order is the whole point
+/// of offering more than one.
+pub fn render(
+  icons: &[Icon],
+  family: &str,
+  classes: Classes<'_>,
+  sources: &[Source<'_>],
+) -> String {
   let mut sheet = Sheet::new();
 
   sheet.at_rule("font-face", |block| {
     block.set("font-family", Value::quoted(family));
     block.set(
       "src",
-      Value::list([
-        Value::url(font_url),
-        Value::call("format", Value::quoted("truetype")),
-      ]),
+      Value::comma_list(sources.iter().map(|source| {
+        Value::list([
+          Value::url(source.url),
+          Value::call("format", Value::quoted(source.format)),
+        ])
+      })),
     );
     block.set("font-weight", Value::keyword("normal"));
     block.set("font-style", Value::keyword("normal"));
@@ -112,6 +127,14 @@ mod tests {
   use super::*;
   use crate::svg;
 
+  /// A single TrueType source, which is what most of these tests care about.
+  fn ttf() -> Vec<Source<'static>> {
+    vec![Source {
+      url: "f.ttf",
+      format: "truetype",
+    }]
+  }
+
   fn icon(name: &str, codepoint: char) -> Icon {
     let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <rect width="24" height="24" fill="#000"/>
@@ -132,7 +155,7 @@ mod tests {
       prefix: "icon",
       base_class: false,
     };
-    let css = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes, "f.ttf");
+    let css = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes, &ttf());
 
     assert!(css.contains(r#"[class^="icon-"]"#));
     assert!(css.contains(r#"[class*=" icon-"]"#));
@@ -145,7 +168,7 @@ mod tests {
       prefix: "icon",
       base_class: true,
     };
-    let css = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes, "f.ttf");
+    let css = render(&[icon("arrow-left", '\u{e900}')], "Icons", classes, &ttf());
 
     // Nothing is claimed by name alone, so a class of the user's own that
     // happens to start `icon-` is left entirely untouched.
@@ -163,12 +186,51 @@ mod tests {
     // A quote would otherwise end the string, and the `}` would end the rule,
     // leaving whatever follows to be read as CSS of its own.
     let hostile = "My ' Icons; } body{display:none";
-    let css = render(&[icon("check", '\u{e900}')], hostile, classes, "f.ttf");
+    let css = render(&[icon("check", '\u{e900}')], hostile, classes, &ttf());
 
     assert!(css.contains(r"font-family: 'My \' Icons; } body{display:none';"));
     // One `@font-face`, one base rule, one icon rule -- and nothing else.
     assert_eq!(css.matches('{').count(), css.matches('}').count());
     assert!(!css.contains("body{display:none;"));
+  }
+
+  #[test]
+  fn every_source_is_offered_in_the_order_it_was_given() {
+    let classes = Classes {
+      prefix: "icon",
+      base_class: false,
+    };
+    let sources = [
+      Source {
+        url: "icons.woff2",
+        format: "woff2",
+      },
+      Source {
+        url: "icons.woff",
+        format: "woff",
+      },
+      Source {
+        url: "icons.ttf",
+        format: "truetype",
+      },
+    ];
+    let css = render(&[icon("check", '\u{e900}')], "Icons", classes, &sources);
+
+    // A browser takes the first container it understands, so woff2 has to come
+    // first or the smallest file never gets used.
+    let src = css
+      .lines()
+      .skip_while(|line| !line.trim_start().starts_with("src:"))
+      .take(3)
+      .collect::<Vec<_>>()
+      .join("\n");
+    assert!(src.contains("url('icons.woff2') format('woff2')"));
+    assert!(src.contains("url('icons.woff') format('woff')"));
+    assert!(src.contains("url('icons.ttf') format('truetype')"));
+    assert!(
+      src.find("woff2").unwrap() < src.find("truetype").unwrap(),
+      "woff2 must be offered before ttf:\n{src}"
+    );
   }
 
   #[test]
