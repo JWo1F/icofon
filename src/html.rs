@@ -273,7 +273,7 @@ fn section_open(group: Option<&str>) -> String {
     None => String::new(),
   };
   format!(
-    r#"<section class="group mb-8" data-group="{group}">
+    r#"<section class="icon-group mb-8" data-group="{group}">
 {heading}  <div class="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
 "#,
     group = escape(group.unwrap_or_default()),
@@ -367,7 +367,7 @@ const SWATCHES: [&str; 9] = [
 ];
 
 const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.card'));
-  const groups = Array.from(document.querySelectorAll('.group'));
+  const groups = Array.from(document.querySelectorAll('.icon-group'));
   const search = document.getElementById('search');
   const shown = document.getElementById('shown');
   const empty = document.getElementById('empty');
@@ -597,6 +597,23 @@ mod tests {
     // selector that matches it.
     assert!(page.contains(r#"data-copy="icon icon-arrow-left""#));
     assert!(page.contains(">.icon.icon-arrow-left</button>"));
+  }
+
+  #[test]
+  fn only_icon_sections_carry_the_class_the_filter_hides() {
+    // Filtering hides every `.icon-group` left without a visible card. The
+    // section hook used to be `group`, which is also a Tailwind utility, and
+    // the search box's own label carries it -- so typing a query hid the
+    // search box. The hook must stay unique to sections.
+    let page = render(
+      &[grouped("left", '\u{e900}', Some("arrows"))],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+
+    assert_eq!(page.matches(r#"class="icon-group"#).count(), 1);
+    assert!(page.contains(r#"<section class="icon-group mb-8" data-group="arrows">"#));
   }
 
   #[test]
