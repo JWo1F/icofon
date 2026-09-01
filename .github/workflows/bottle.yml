@@ -91,7 +91,7 @@ jobs:
       - name: Attach the bottles to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "v${{ inputs.version }}" bottles/*.bottle.tar.gz --clobber
+        run: gh release upload "v${{ inputs.version }}" bottles/*.bottle.tar.gz --clobber --repo "${{ github.repository }}"
 
       - name: Write the bottle block into the formula
         run: |
