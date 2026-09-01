@@ -37,7 +37,10 @@ jobs:
         os: [macos-26, macos-15, macos-14, macos-15-intel]
     steps:
       - name: Tap
-        run: brew tap JWo1F/tap
+        # A third-party tap has to be trusted before its formulae will load.
+        run: |
+          brew tap JWo1F/tap
+          brew trust JWo1F/tap
 
       - name: Check the formula is at ${{ inputs.version }}
         run: |
@@ -97,6 +100,7 @@ jobs:
         run: |
           set -euo pipefail
           brew tap JWo1F/tap
+          brew trust JWo1F/tap
           brew bottle --merge --write --no-commit bottles/*.bottle.json
           git -C "$(brew --repository JWo1F/tap)" diff
 
