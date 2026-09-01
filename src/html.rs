@@ -36,7 +36,7 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
 <link rel="stylesheet" href="{css}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script src="{tailwind}"></script>
 <style type="text/tailwindcss">
 {theme_css}</style>

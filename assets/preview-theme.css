@@ -3,5 +3,5 @@
   @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
   @theme {
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    --font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+    --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   }
