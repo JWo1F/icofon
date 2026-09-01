@@ -59,12 +59,14 @@ jobs:
           for f in *--*.bottle.tar.gz; do mv "$f" "${f/--/-}"; done
           ls -la ./*.bottle.*
 
-      - name: Check the bottle runs
+      - name: Run the formula's test against the build
+        run: brew test "$FORMULA"
+
+      - name: Check the bottle carries a working binary
         run: |
           set -euo pipefail
-          brew uninstall icofon
-          brew install ./*.bottle.tar.gz
-          icofon --version
+          tar -xzf ./*.bottle.tar.gz
+          ./icofon/${{ inputs.version }}/bin/icofon --version
 
       - uses: actions/upload-artifact@v4
         with:
