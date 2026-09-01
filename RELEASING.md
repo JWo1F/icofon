@@ -106,22 +106,23 @@ A bottle is a precompiled build. Without one, `brew install` compiles from
 source and pulls in the whole Rust toolchain — several minutes and a large
 download for something that takes 1.1 MB to ship.
 
-Once the formula in the tap points at the new tag, run the `Bottle` workflow in
-this repository:
+Once the formula in the tap points at the new tag, run the `Bottle` workflow —
+it lives in the tap, not here:
 
 ```bash
-gh workflow run bottle.yml -f version=0.2.0
+gh workflow run bottle.yml --repo JWo1F/homebrew-tap -f version=0.2.0
 ```
 
 It builds on macOS 26, 15 and 14 (Apple Silicon) and macOS 15 (Intel), attaches
-the tarballs to the release, and writes the `bottle do` block into the tap
+the tarballs to a release on the tap, and commits the `bottle do` block to the
 formula. Homebrew falls back to a bottle from an older macOS of the same
 architecture, so those four cover more than they look like they do; anything
 else — Linux, older macOS — still builds from source, which works.
 
-Pushing the formula needs a `TAP_TOKEN` repository secret: a personal access
-token with `contents: write` on `JWo1F/homebrew-tap`. Without it the workflow
-still builds and uploads the bottles, and prints the block to paste in by hand.
+Both writes land in the tap, so the workflow runs on the built-in
+`GITHUB_TOKEN`. There is no secret to create, rotate or leak. The bottles are
+hosted on the tap's releases rather than beside the source tarball here, which
+is what buys that.
 
 **Bottles are not byte-reproducible.** Re-running the workflow for a version
 that already has bottles replaces the tarballs and so changes their checksums,
@@ -132,8 +133,8 @@ from an earlier run.
 ## Moving to homebrew-core later
 
 Once in core, Homebrew's own CI builds the bottles for every platform they
-support and the `bottle do` block is maintained for you — the `Bottle` workflow
-and the `TAP_TOKEN` secret both go away.
+support and the `bottle do` block is maintained for you — the tap's `Bottle`
+workflow goes away with it.
 
 A personal tap needs no approval and can be published the day a release is cut.
 `homebrew-core` — where `brew install icofon` works without the tap prefix — has
