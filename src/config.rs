@@ -60,6 +60,17 @@ pub enum OnError {
   Skip,
 }
 
+/// What to do about two files whose names reduce to the same icon name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+pub enum OnDuplicate {
+  /// Name every clash and build nothing.
+  Fail,
+  /// Number the later ones, and say so on stderr.
+  Number,
+}
+
 /// `icofon.toml`, every field optional so a file can set only what it cares
 /// about.
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -76,6 +87,7 @@ pub struct File {
   pub manifest_path: Option<PathBuf>,
   pub start: Option<String>,
   pub on_error: Option<OnError>,
+  pub on_duplicate: Option<OnDuplicate>,
 }
 
 impl File {
@@ -115,6 +127,7 @@ pub struct Build {
   pub manifest: Option<PathBuf>,
   pub start: char,
   pub on_error: OnError,
+  pub on_duplicate: OnDuplicate,
 }
 
 impl Build {

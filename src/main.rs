@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use config::{Format, OnError};
+use config::{Format, OnDuplicate, OnError};
 use font::Icon;
 use manifest::Manifest;
 
@@ -92,6 +92,10 @@ struct BuildArgs {
   /// What to do about an icon that cannot become a glyph.
   #[arg(long, value_name = "WHAT")]
   on_error: Option<OnError>,
+
+  /// What to do about two files whose names reduce to the same icon name.
+  #[arg(long, value_name = "WHAT")]
+  on_duplicate: Option<OnDuplicate>,
 
   /// First codepoint to assign, as hex. Defaults to the start of the Private
   /// Use Area block that icon fonts conventionally use.
@@ -211,6 +215,10 @@ fn settings(args: &BuildArgs) -> Result<config::Build> {
     manifest,
     start,
     on_error: args.on_error.or(file.on_error).unwrap_or(OnError::Fail),
+    on_duplicate: args
+      .on_duplicate
+      .or(file.on_duplicate)
+      .unwrap_or(OnDuplicate::Fail),
   })
 }
 
@@ -276,7 +284,7 @@ fn build(settings: &config::Build, write_mode: Write) -> Result<Report> {
     None => Manifest::default(),
   };
 
-  let icons = load_icons(&files, settings.start, &manifest)?;
+  let icons = load_icons(&files, settings.start, &manifest, settings.on_duplicate)?;
   let icons = triage(icons, settings.on_error == OnError::Skip)?;
 
   if write_mode == Write::Nothing {
@@ -331,7 +339,11 @@ fn build(settings: &config::Build, write_mode: Write) -> Result<Report> {
 
   if let Some(path) = &settings.manifest {
     for icon in &icons {
-      manifest.insert(&icon.name, icon.codepoint);
+      manifest.insert(
+        &manifest_key(icon.group.as_deref(), &icon.source),
+        &icon.name,
+        icon.codepoint,
+      );
     }
     ensure_parent(path)?;
     manifest.save(path)?;
@@ -472,68 +484,65 @@ fn walk(dir: &Path, group: Option<&str>, out: &mut Vec<SvgFile>) -> Result<()> {
   Ok(())
 }
 
+/// A file and the name it asks for, before any clash between them is settled.
+struct Wanted<'a> {
+  file: &'a SvgFile,
+  /// How the manifest knows this icon: its path inside the icon folder.
+  key: String,
+  /// The name the file would have if nothing else wanted it.
+  base: String,
+  /// The file part of that name, which is what the preview card shows.
+  label: String,
+  /// A codepoint asked for by a `uE901-` prefix on the file name.
+  pin: Option<char>,
+}
+
+/// A file with its name settled.
+struct Named<'a> {
+  file: &'a SvgFile,
+  key: String,
+  name: String,
+  label: String,
+  pin: Option<char>,
+}
+
 /// Parse each SVG and pair it with a name and a codepoint.
 ///
 /// An icon's name is its file stem, prefixed with the subfolders it sits in, so
-/// `arrows/left.svg` is `arrows-left`.
+/// `arrows/left.svg` is `arrows-left`. Two files whose stems reduce to the same
+/// name stop the build unless `on_duplicate` asks for them to be numbered.
 ///
 /// Codepoints come from three places, in order of precedence: a `uE901-` prefix
 /// on the file name, the manifest's record of a previous build, and finally the
 /// next free codepoint at or after `first`. The manifest is what keeps an icon's
 /// codepoint from moving when new icons are added around it.
-fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec<Icon>> {
-  let mut names: BTreeMap<String, &Path> = BTreeMap::new();
-  let mut taken = BTreeSet::new();
-  let mut pinned_by: BTreeMap<char, String> = BTreeMap::new();
+fn load_icons(
+  files: &[SvgFile],
+  first: char,
+  manifest: &Manifest,
+  on_duplicate: OnDuplicate,
+) -> Result<Vec<Icon>> {
+  let named = resolve_names(files, manifest, on_duplicate)?;
 
-  // Resolve names and pinned codepoints first, so that a pinned codepoint is
+  // Resolve pinned codepoints before anything is assigned, so that a pin is
   // never stolen by an icon that happens to be processed earlier.
-  let mut pending = Vec::with_capacity(files.len());
-  for file in files {
-    let stem =
-      file_stem(&file.path).with_context(|| format!("{} has no file name", file.path.display()))?;
-    let (codepoint, stem) = split_codepoint(&stem);
-    // The subfolder becomes part of the name, so icons/arrows/left.svg is
-    // `arrows-left`. Two folders can then each hold a `left.svg`.
-    let label = sanitize_name(&stem);
-    let name = match &file.group {
-      Some(group) => sanitize_name(&format!("{group}/{stem}")),
-      None => label.clone(),
-    };
-    if name.is_empty() {
-      bail!("{} has no usable icon name", file.path.display());
-    }
-
-    // Two files can still want the same name — `map-pin.svg` and
-    // `map_pin.svg` both reduce to `map-pin`. Files are walked in sorted
-    // order, so the first keeps the plain name and later ones are numbered.
-    let (name, label) = match next_free_name(&name, &names) {
-      (name, None) => (name, label),
-      (numbered, Some(suffix)) => {
-        eprintln!(
-          "'{name}' is already taken by {}, so {} is called '{numbered}'",
-          names[&name].display(),
-          file.path.display(),
-        );
-        (numbered, format!("{label}-{suffix}"))
+  let mut taken = BTreeSet::new();
+  let mut pinned_by: BTreeMap<char, usize> = BTreeMap::new();
+  for (index, icon) in named.iter().enumerate() {
+    if let Some(pin) = icon.pin {
+      if !taken.insert(pin) {
+        bail!("codepoint U+{:04X} is claimed twice", pin as u32);
       }
-    };
-    names.insert(name.clone(), &file.path);
-    if let Some(codepoint) = codepoint {
-      if !taken.insert(codepoint) {
-        bail!("codepoint U+{:04X} is claimed twice", codepoint as u32);
-      }
-      pinned_by.insert(codepoint, name.clone());
+      pinned_by.insert(pin, index);
     }
-    pending.push((file, name, label, codepoint));
   }
 
   // Reserve everything the manifest has ever handed out, including to icons
   // that have since been deleted, so a codepoint is never reused.
   for codepoint in manifest.reserved() {
-    if let Some(owner) = pinned_by.get(&codepoint) {
+    if let Some(owner) = pinned_by.get(&codepoint).map(|index| &named[*index]) {
       // The pin wins, but only silently when it agrees with the record.
-      if manifest.get(owner) != Some(codepoint) {
+      if manifest.get(&owner.key, &owner.name) != Some(codepoint) {
         bail!(
           "U+{:04X} is pinned by a file name but the manifest already gave it to \
                      another icon; remove the pin or the manifest entry",
@@ -545,28 +554,182 @@ fn load_icons(files: &[SvgFile], first: char, manifest: &Manifest) -> Result<Vec
   }
 
   let mut next = first;
-  let mut icons = Vec::with_capacity(pending.len());
-  for (file, name, label, pinned) in pending {
-    let codepoint = match pinned.or_else(|| manifest.get(&name)) {
+  let mut icons = Vec::with_capacity(named.len());
+  for icon in named {
+    let codepoint = match icon.pin.or_else(|| manifest.get(&icon.key, &icon.name)) {
       Some(codepoint) => codepoint,
       None => {
-        let free =
-          next_free(next, &taken).with_context(|| format!("ran out of codepoints at '{name}'"))?;
+        let free = next_free(next, &taken)
+          .with_context(|| format!("ran out of codepoints at '{}'", icon.name))?;
         taken.insert(free);
         next = char::from_u32(free as u32 + 1).unwrap_or(free);
         free
       }
     };
     icons.push(Icon {
-      name,
-      label,
-      group: file.group.clone(),
-      source: file.path.clone(),
+      name: icon.name,
+      label: icon.label,
+      group: icon.file.group.clone(),
+      source: icon.file.path.clone(),
       codepoint,
-      outline: svg::load(&file.path)?,
+      outline: svg::load(&icon.file.path)?,
     });
   }
   Ok(icons)
+}
+
+/// Give every file a name of its own.
+///
+/// Different file names can still reduce to the same slug — `map-pin.svg` and
+/// `map_pin.svg` both give `map-pin` — which is a build failure by default,
+/// because a number is not part of either file: which file gets which depends
+/// on what else is in the folder. Under `--on-duplicate number` they are
+/// numbered anyway, and the manifest remembers which file was given which
+/// number, so a third clashing file takes the next one instead of renumbering
+/// the icons that were there first.
+fn resolve_names<'a>(
+  files: &'a [SvgFile],
+  manifest: &Manifest,
+  on_duplicate: OnDuplicate,
+) -> Result<Vec<Named<'a>>> {
+  let mut wanted = Vec::with_capacity(files.len());
+  for file in files {
+    let stem =
+      file_stem(&file.path).with_context(|| format!("{} has no file name", file.path.display()))?;
+    let (pin, stem) = split_codepoint(&stem);
+    let label = sanitize_name(&stem);
+    // The subfolder becomes part of the name, so icons/arrows/left.svg is
+    // `arrows-left`. Two folders can then each hold a `left.svg`.
+    let base = match &file.group {
+      Some(group) => sanitize_name(&format!("{group}/{stem}")),
+      None => label.clone(),
+    };
+    if base.is_empty() {
+      bail!("{} has no usable icon name", file.path.display());
+    }
+    wanted.push(Wanted {
+      file,
+      key: manifest_key(file.group.as_deref(), &file.path),
+      base,
+      label,
+      pin,
+    });
+  }
+
+  if on_duplicate == OnDuplicate::Fail {
+    reject_clashes(&wanted)?;
+  }
+
+  // A name an earlier build gave this exact file is claimed first, whatever
+  // position the file now sorts into. That is what makes numbering survive a
+  // third clashing file: the icon that was `map-pin-2` stays `map-pin-2`, and
+  // therefore keeps its class and its codepoint.
+  let mut taken: BTreeMap<String, &Path> = BTreeMap::new();
+  let mut settled: Vec<Option<String>> = vec![None; wanted.len()];
+  for (slot, want) in settled.iter_mut().zip(&wanted) {
+    let Some(recorded) = manifest.name(&want.key) else {
+      continue;
+    };
+    if is_variant_of(recorded, &want.base) && !taken.contains_key(recorded) {
+      taken.insert(recorded.to_string(), &want.file.path);
+      *slot = Some(recorded.to_string());
+    }
+  }
+
+  let mut named = Vec::with_capacity(wanted.len());
+  for (want, settled) in wanted.iter().zip(settled) {
+    let name = match settled {
+      Some(name) => name,
+      None => {
+        let name = next_free_name(&want.base, &taken);
+        if name != want.base {
+          eprintln!(
+            "'{}' is already taken by {}, so {} is called '{name}'",
+            want.base,
+            taken[&want.base].display(),
+            want.file.path.display(),
+          );
+        }
+        name
+      }
+    };
+    taken.insert(name.clone(), &want.file.path);
+    // A numbered name needs a numbered label too, or two preview cards read
+    // identically.
+    let label = match name
+      .strip_prefix(&want.base)
+      .and_then(|rest| rest.strip_prefix('-'))
+    {
+      Some(suffix) => format!("{}-{suffix}", want.label),
+      None => want.label.clone(),
+    };
+    named.push(Named {
+      file: want.file,
+      key: want.key.clone(),
+      name,
+      label,
+      pin: want.pin,
+    });
+  }
+  Ok(named)
+}
+
+/// Refuse a build in which two files want the same name, listing every clash
+/// at once so a large set is fixed in one pass.
+fn reject_clashes(wanted: &[Wanted<'_>]) -> Result<()> {
+  let mut by_name: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
+  for want in wanted {
+    by_name.entry(&want.base).or_default().push(&want.file.path);
+  }
+  let clashes: Vec<_> = by_name
+    .into_iter()
+    .filter(|(_, files)| files.len() > 1)
+    .collect();
+  if clashes.is_empty() {
+    return Ok(());
+  }
+
+  let mut list = String::new();
+  for (name, files) in &clashes {
+    list.push_str(&format!("  '{name}'\n"));
+    for path in files {
+      list.push_str(&format!("      {}\n", path.display()));
+    }
+  }
+  bail!(
+    "{} icon name{} claimed by more than one file:\n{}\
+         Rename one file in each group, or pass --on-duplicate number to number them.",
+    clashes.len(),
+    if clashes.len() == 1 { " is" } else { "s are" },
+    list
+  );
+}
+
+/// Whether `recorded` is a name this file could still be given: its own name,
+/// or that name with a number added to settle a clash. A file renamed since
+/// the last build fails this, and is named from scratch.
+fn is_variant_of(recorded: &str, base: &str) -> bool {
+  match recorded.strip_prefix(base) {
+    Some("") => true,
+    Some(rest) => rest
+      .strip_prefix('-')
+      .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())),
+    None => false,
+  }
+}
+
+/// How the manifest knows an icon: its path inside the icon folder, always
+/// forward-slashed so that a manifest written on Windows reads the same
+/// everywhere else.
+fn manifest_key(group: Option<&str>, path: &Path) -> String {
+  let file = path
+    .file_name()
+    .map(|name| name.to_string_lossy().into_owned())
+    .unwrap_or_default();
+  match group {
+    Some(group) => format!("{group}/{file}"),
+    None => file,
+  }
 }
 
 /// Separate the icons that became real glyphs from the ones that could not.
@@ -586,7 +749,7 @@ fn triage(icons: Vec<Icon>, skip_errors: bool) -> Result<Vec<Icon>> {
   if !skip_errors {
     bail!(
       "{} of {} icons cannot be turned into a glyph:\n{}\n\
-             Fix them, or pass --skip-errors to leave them out.",
+             Fix them, or pass --on-error skip to leave them out.",
       broken.len(),
       broken.len() + good.len(),
       problem_list(&broken)
@@ -620,18 +783,15 @@ fn problem_list(broken: &[Icon]) -> String {
 }
 
 /// Find a free name for `base`, numbering it `-2`, `-3`, … if it is taken.
-///
-/// Returns the suffix as well so the preview label can be numbered to match,
-/// otherwise two cards would read identically.
-fn next_free_name(base: &str, taken: &BTreeMap<String, &Path>) -> (String, Option<u32>) {
+fn next_free_name(base: &str, taken: &BTreeMap<String, &Path>) -> String {
   if !taken.contains_key(base) {
-    return (base.to_string(), None);
+    return base.to_string();
   }
   // Starts at 2 so the pair reads as `map-pin` and `map-pin-2`. Skips any
   // number a real file already claimed, so `map-pin-2.svg` keeps its name.
   (2..)
-    .map(|suffix| (format!("{base}-{suffix}"), Some(suffix)))
-    .find(|(candidate, _)| !taken.contains_key(candidate))
+    .map(|suffix| format!("{base}-{suffix}"))
+    .find(|candidate| !taken.contains_key(candidate))
     .expect("the range is unbounded, so some candidate is free")
 }
 
@@ -804,7 +964,7 @@ mod tests {
       &["check.svg", "arrows/left.svg", "arrows/nested/up.svg"],
     );
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+    let icons = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail).unwrap();
 
     let named: Vec<_> = icons
       .iter()
@@ -827,7 +987,7 @@ mod tests {
   fn two_folders_may_hold_the_same_file_name() {
     let dir = icon_folder("same-file", &["arrows/left.svg", "social/left.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+    let icons = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail).unwrap();
 
     let names: Vec<_> = icons.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, ["arrows-left", "social-left"]);
@@ -840,7 +1000,13 @@ mod tests {
     // name. '-' sorts before '_', so map-pin.svg wins.
     let dir = icon_folder("collide", &["map-pin.svg", "map_pin.svg", "map pin.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Number,
+    )
+    .unwrap();
 
     let names: Vec<_> = icons.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, ["map-pin", "map-pin-2", "map-pin-3"]);
@@ -856,7 +1022,13 @@ mod tests {
       &["map-pin.svg", "map-pin-2.svg", "map_pin.svg"],
     );
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Number,
+    )
+    .unwrap();
 
     let named: Vec<_> = icons
       .iter()
@@ -885,7 +1057,13 @@ mod tests {
     // case-insensitive filesystem.)
     let dir = icon_folder("collide-label", &["group/pin.svg", "group/pin_.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Number,
+    )
+    .unwrap();
 
     let labels: Vec<_> = icons.iter().map(|i| i.label.as_str()).collect();
     assert_eq!(labels, ["pin", "pin-2"]);
@@ -896,21 +1074,25 @@ mod tests {
   fn adding_an_icon_leaves_existing_codepoints_alone() {
     let dir = icon_folder("stable", &["check.svg", "zoom.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let first = load_icons(&files, '\u{e900}', &Manifest::default()).unwrap();
+    let first = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail).unwrap();
     let before = codepoints(&first);
     assert_eq!(before["check"], '\u{e900}');
     assert_eq!(before["zoom"], '\u{e901}');
 
     let mut manifest = Manifest::default();
     for icon in &first {
-      manifest.insert(&icon.name, icon.codepoint);
+      manifest.insert(
+        &manifest_key(icon.group.as_deref(), &icon.source),
+        &icon.name,
+        icon.codepoint,
+      );
     }
 
     // This one sorts before both existing icons, so without the manifest it
     // would take U+E900 and shift everything after it.
     std::fs::write(dir.join("aaa.svg"), SQUARE).unwrap();
     let files = collect_svgs(&dir).unwrap();
-    let second = load_icons(&files, '\u{e900}', &manifest).unwrap();
+    let second = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
     let after = codepoints(&second);
 
     assert_eq!(after["check"], '\u{e900}');
@@ -922,11 +1104,11 @@ mod tests {
   #[test]
   fn a_deleted_icons_codepoint_is_never_handed_to_another_icon() {
     let mut manifest = Manifest::default();
-    manifest.insert("retired", '\u{e900}');
+    manifest.insert("retired.svg", "retired", '\u{e900}');
 
     let dir = icon_folder("retired", &["fresh.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &manifest).unwrap();
+    let icons = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
 
     assert_eq!(icons[0].name, "fresh");
     assert_eq!(icons[0].codepoint, '\u{e901}', "U+E900 is still reserved");
@@ -934,15 +1116,103 @@ mod tests {
   }
 
   #[test]
+  fn clashing_names_stop_the_build() {
+    // A number is not part of either file, so which file gets which depends on
+    // what else is in the folder. Naming both files is the fix that stays
+    // fixed, and the build asks for it rather than guessing.
+    let dir = icon_folder("clash-fails", &["map-pin.svg", "map_pin.svg"]);
+    let files = collect_svgs(&dir).unwrap();
+    let error = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail)
+      .unwrap_err()
+      .to_string();
+
+    assert!(error.contains("'map-pin'"), "{error}");
+    assert!(error.contains("map-pin.svg"), "{error}");
+    assert!(error.contains("map_pin.svg"), "{error}");
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn a_numbered_name_stays_with_the_file_that_earned_it() {
+    // Numbering used to fall out of sort order alone, so a third clashing file
+    // that sorted first took `map-pin` and pushed every later one along —
+    // renaming icons that pages already used, and moving their codepoints with
+    // them. The manifest records which file was given which number, so the
+    // newcomer takes the next one instead.
+    let dir = icon_folder("renumber", &["map-pin.svg", "map_pin.svg"]);
+    let files = collect_svgs(&dir).unwrap();
+    let first = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Number,
+    )
+    .unwrap();
+
+    let mut manifest = Manifest::default();
+    for icon in &first {
+      manifest.insert(
+        &manifest_key(icon.group.as_deref(), &icon.source),
+        &icon.name,
+        icon.codepoint,
+      );
+    }
+
+    // A space sorts before both '-' and '_', so this one is walked first.
+    std::fs::write(dir.join("map pin.svg"), SQUARE).unwrap();
+    let files = collect_svgs(&dir).unwrap();
+    let second = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Number).unwrap();
+
+    let named: Vec<_> = second
+      .iter()
+      .map(|i| {
+        (
+          i.source.file_name().unwrap().to_str().unwrap(),
+          i.name.as_str(),
+          i.codepoint,
+        )
+      })
+      .collect();
+    assert_eq!(
+      named,
+      [
+        ("map pin.svg", "map-pin-3", '\u{e902}'),
+        ("map-pin.svg", "map-pin", '\u{e900}'),
+        ("map_pin.svg", "map-pin-2", '\u{e901}'),
+      ]
+    );
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn a_manifest_from_an_older_icofon_keeps_its_codepoints() {
+    // 0.3 and earlier keyed records by name. Reading them is what stops the
+    // first build after an upgrade from reassigning every codepoint in the set.
+    let dir = icon_folder("legacy", &["check.svg", "aaa.svg"]);
+    let path = dir.join(manifest::DEFAULT_FILE);
+    std::fs::write(&path, r#"{ "codepoints": { "check": "e900" } }"#).unwrap();
+
+    let manifest = Manifest::load(&path).unwrap();
+    let files = collect_svgs(&dir).unwrap();
+    let icons = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
+    let after = codepoints(&icons);
+
+    assert_eq!(after["check"], '\u{e900}');
+    assert_eq!(after["aaa"], '\u{e901}', "the free slot, not check's");
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
   fn a_pin_moves_the_icon_it_names() {
     // Renaming heart.svg to uE9F0-heart.svg is a deliberate instruction to
-    // move that icon, so the pin wins over the icon's own record.
+    // move that icon, so the pin decides where it lands whatever the manifest
+    // recorded for the file it used to be.
     let mut manifest = Manifest::default();
-    manifest.insert("heart", '\u{e900}');
+    manifest.insert("heart.svg", "heart", '\u{e900}');
 
     let dir = icon_folder("pin-moves", &["uE9F0-heart.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &manifest).unwrap();
+    let icons = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
 
     assert_eq!(icons[0].name, "heart");
     assert_eq!(icons[0].codepoint, '\u{e9f0}');
@@ -954,11 +1224,11 @@ mod tests {
     // U+E900 already belongs to heart, so letting badge pin it would leave
     // two icons fighting over one codepoint.
     let mut manifest = Manifest::default();
-    manifest.insert("heart", '\u{e900}');
+    manifest.insert("heart.svg", "heart", '\u{e900}');
 
     let dir = icon_folder("pin-steals", &["uE900-badge.svg", "heart.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let error = load_icons(&files, '\u{e900}', &manifest)
+    let error = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail)
       .unwrap_err()
       .to_string();
     assert!(error.contains("pinned by a file name"), "{error}");

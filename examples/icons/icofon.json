@@ -1,20 +1,68 @@
 {
-  "codepoints": {
-    "ai-background": "e90a",
-    "ai-concert": "e90b",
-    "alert": "e907",
-    "analytics": "e908",
-    "badge-colour": "e905",
-    "bars-wide-bar": "e901",
-    "brackets": "e909",
-    "brands-github": "e90c",
-    "brands-google-drive": "e90d",
-    "brands-telegram": "e90e",
-    "check": "e900",
-    "shapes-blocks": "e902",
-    "shapes-evenodd-donut": "e903",
-    "shapes-ring": "e904",
-    "shapes-tinted-ring": "e906",
-    "star-filled": "e9f0"
+  "icons": {
+    "ai/background.svg": {
+      "name": "ai-background",
+      "codepoint": "e90a"
+    },
+    "ai/concert.svg": {
+      "name": "ai-concert",
+      "codepoint": "e90b"
+    },
+    "alert.svg": {
+      "name": "alert",
+      "codepoint": "e907"
+    },
+    "analytics.svg": {
+      "name": "analytics",
+      "codepoint": "e908"
+    },
+    "badge-colour.svg": {
+      "name": "badge-colour",
+      "codepoint": "e905"
+    },
+    "bars/wide-bar.svg": {
+      "name": "bars-wide-bar",
+      "codepoint": "e901"
+    },
+    "brackets.svg": {
+      "name": "brackets",
+      "codepoint": "e909"
+    },
+    "brands/github.svg": {
+      "name": "brands-github",
+      "codepoint": "e90c"
+    },
+    "brands/google-drive.svg": {
+      "name": "brands-google-drive",
+      "codepoint": "e90d"
+    },
+    "brands/telegram.svg": {
+      "name": "brands-telegram",
+      "codepoint": "e90e"
+    },
+    "check.svg": {
+      "name": "check",
+      "codepoint": "e900"
+    },
+    "shapes/blocks.svg": {
+      "name": "shapes-blocks",
+      "codepoint": "e902"
+    },
+    "shapes/evenodd-donut.svg": {
+      "name": "shapes-evenodd-donut",
+      "codepoint": "e903"
+    },
+    "shapes/ring.svg": {
+      "name": "shapes-ring",
+      "codepoint": "e904"
+    },
+    "shapes/tinted-ring.svg": {
+      "name": "shapes-tinted-ring",
+      "codepoint": "e906"
+    },
+    "uE9F0-Star Filled.svg": {
+      "name": "star-filled",
+      "codepoint": "e9f0"
+    }
   }
 }

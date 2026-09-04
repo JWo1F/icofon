@@ -15,7 +15,7 @@ That reads every `.svg` under `./icons` and writes:
   dist/icons.ttf               5.1 KB
   dist/icons.css               1.3 KB
   dist/index.html              35.5 KB
-  icons/icofon.json            476 B
+  icons/icofon.json            1.4 KB
 ```
 
 | File | What it is |
@@ -225,6 +225,24 @@ an icon keeps the codepoint it already had, and only icons icofon has never seen
 get a new one — so dropping `aardvark.svg` into a set does not shift everything
 after it and break pages already using the font.
 
+Each record is keyed by the icon's path inside the folder, and carries the name
+that path was given:
+
+```json
+{
+  "icons": {
+    "arrows/left.svg": { "name": "arrows-left", "codepoint": "e900" }
+  }
+}
+```
+
+The path is the key rather than the name because a name is not always the file's
+alone: two files whose names reduce to the same slug are told apart by a number,
+and that number depends on what else is in the folder. A path does not move when
+a neighbour appears, so neither does the codepoint. A manifest written by icofon
+0.3 or earlier is keyed by name; it is read as it stands and rewritten under
+paths on the next build, so no codepoint moves on the way across.
+
 That makes `icofon.json` worth committing alongside the SVGs. Without it, the
 guarantee is gone: codepoints would be reassigned in file-name order on every
 build.
@@ -331,8 +349,22 @@ are two icons pinning the same codepoint.
 ## Duplicate names
 
 Different file names can still slugify to the same thing — `map-pin.svg` and
-`map_pin.svg` both give `map-pin`. Rather than failing, the first in sorted
-order keeps the plain name and the rest are numbered, and each one is reported:
+`map_pin.svg` both give `map-pin`. That stops the build, and every clash is
+named at once:
+
+```
+Error: 1 icon name is claimed by more than one file:
+  'map-pin'
+      icons/map-pin.svg
+      icons/map_pin.svg
+Rename one file in each group, or pass --on-duplicate number to number them.
+```
+
+Renaming one of the files is the fix that stays fixed: the name is then part of
+the file, and nothing else in the folder can take it away.
+
+`--on-duplicate number` builds anyway. The first in sorted order keeps the plain
+name and the rest are numbered from 2, each one reported:
 
 ```
 'map-pin' is already taken by icons/map-pin.svg, so icons/map_pin.svg is called 'map-pin-2'
@@ -343,13 +375,16 @@ icons/map-pin.svg   ->  .icon-map-pin
 icons/map_pin.svg   ->  .icon-map-pin-2
 ```
 
-Numbering starts at 2 and steps over names a real file already has, so an
-existing `map-pin-2.svg` keeps its own name.
+Numbering steps over names a real file already has, so an existing
+`map-pin-2.svg` keeps its own. A number is recorded in the manifest against the
+file that got it and stays with that file, so a third clashing icon — even one
+that sorts ahead of both — takes the next free number instead of renumbering the
+icons that were there first. Classes and codepoints already in use do not move —
+`--no-manifest` has nothing to record them in, so there the numbering is back to
+following sort order.
 
-Treat the message as something to fix rather than a normal state. The numbering
-depends on sort order, so adding a *third* colliding file that sorts before the
-others renumbers the ones after it — which changes their names, and therefore
-their codepoints. Renaming one of the originals is the durable fix.
+The number stays until the file is renamed, which is still the better answer:
+`map-pin-2` says nothing about what the icon is.
 
 ## Options
 
@@ -365,6 +400,8 @@ icofon build [SOURCE] [OPTIONS]
       --manifest <PATH>  Codepoint manifest (default: icofon.json in the icon folder)
       --no-manifest      Assign codepoints from scratch every build; they will move
       --on-error <WHAT>  fail (default) or skip icons that cannot become a glyph
+      --on-duplicate <WHAT>
+                         fail (default) or number icons whose names collide
       --start <HEX>      First codepoint to assign (default: e900)
       --config <PATH>    Read this file instead of looking for icofon.toml
 ```
@@ -385,7 +422,7 @@ icofon build examples/icons -o dist --name "My Icons" --prefix ico
   dist/My Icons.ttf            5.1 KB
   dist/My Icons.css            1.3 KB
   dist/index.html              35.4 KB
-  examples/icons/icofon.json   476 B
+  examples/icons/icofon.json   1.4 KB
 ```
 
 ## Contributing
