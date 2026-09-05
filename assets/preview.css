@@ -225,6 +225,21 @@
   .bg-swatch { transition: transform .15s ease; }
   .bg-swatch:hover { transform: scale(1.15); }
 
+  /* A section that stays folded away until it is asked for. The numbers are
+     there to be checked against, not read every time an icon is opened. */
+  .fold-summary {
+    cursor: pointer; list-style: none;
+    display: flex; align-items: center; gap: .4rem;
+    transition: color .15s ease;
+  }
+  .fold-summary::-webkit-details-marker { display: none; }
+  .fold-summary::after {
+    content: "\203a"; display: inline-block;
+    font-size: 13px; line-height: 1; letter-spacing: normal;
+    transition: transform .15s ease;
+  }
+  .fold[open] > .fold-summary::after { transform: rotate(90deg); }
+
   /* The metrics, as a column of labelled numbers rather than prose: they are
      read by comparing one icon against the next, and a column is what makes
      that possible. */
@@ -312,7 +327,7 @@
   /* One focus ring for everything in the dialog, in the page's own accent
      rather than the browser's. */
   .row:focus-visible, .step:focus-visible, .related:focus-visible,
-  #detail-close:focus-visible {
+  .fold-summary:focus-visible, #detail-close:focus-visible {
     outline: 2px solid #2563eb; outline-offset: 2px;
   }
 
