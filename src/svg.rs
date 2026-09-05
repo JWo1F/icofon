@@ -534,74 +534,117 @@ fn append_scaled(out: &mut BezPath, src: &tiny_skia_path::Path, scale: f64) {
   }
 }
 
-/// Re-wind one shape's contours so that solid contours all turn one way and
-/// holes the other.
+/// Turn a shape's contours the same way round as every other shape's, without
+/// changing what the shape itself fills.
 ///
 /// A glyph is a single non-zero-filled path, so every shape an icon is built
 /// from ends up in the same bag of contours. Non-zero filling adds windings
 /// together, which means two overlapping contours that happen to turn opposite
 /// ways *cancel*: a stroke laid over the fill it outlines eats a hole through
 /// it, and an icon drawn as `fill` plus a matching `stroke` — a common way to
-/// fatten artwork — comes out hollow. Orientation is not part of what the
-/// artwork meant, so the fix is to impose one: every contour that bounds ink
-/// turns positive, every hole turns negative. Contours then only ever add up,
-/// and dropping several shapes in one bag unions them.
+/// fatten artwork — comes out hollow.
 ///
-/// Which contours are holes is the shape's own business, and depends on the
-/// fill rule it was drawn with:
+/// Which way round a shape runs is not part of what the artwork meant, so the
+/// fix is to impose one. The unit that can be turned is a contour *together
+/// with everything nested inside it*: reversing a whole nest at once negates
+/// its winding throughout, which leaves what it fills untouched — a hole stays
+/// a hole, and an outline that crosses itself keeps whatever it drew. Turning
+/// every nest so that its outermost contour runs positive leaves shapes that
+/// can only add up.
 ///
-/// * **even-odd**, where nesting alone decides: a contour nested an odd number
-///   deep is a hole.
-/// * **non-zero**, where the windings of everything around a contour decide.
-///   A contour is a hole exactly when the ink outside it cancels against it,
-///   leaving nothing inside.
+/// Neither a smaller nor a larger unit will do, and both have been tried. Judge
+/// each contour on its own and a stroked outline with a fold drawn into it — a
+/// paper plane — loses the hole inside it, because the fold's ink sits over the
+/// hole's edge and nothing local says which of the two it belonged to. Turn the
+/// whole shape at once and a gear whose teeth and lettering are one `<path>`,
+/// wound against each other, keeps the teeth backwards and they subtract from
+/// the rim they sit on.
 fn canonical_winding(path: &BezPath, even_odd: bool) -> BezPath {
-  let contours = split_contours(path);
-  // A lone contour has nothing to nest inside, so it can only be solid.
+  // Even-odd is the one case where contours really are re-wound against each
+  // other: the rule itself has to be translated, since a glyph only knows
+  // non-zero. What comes out is nested cleanly, which is what follows expects.
+  let path = if even_odd {
+    to_nonzero_winding(path)
+  } else {
+    path.clone()
+  };
+
+  let contours = split_contours(&path);
   if contours.len() < 2 {
-    return oriented(path, true);
+    return if path.area() < 0.0 {
+      path.reverse_subpaths()
+    } else {
+      path
+    };
   }
 
-  // `winding` walks a whole contour, so skip the ones that cannot contain the
-  // probe at all.
-  let boxes: Vec<_> = contours.iter().map(Shape::bounding_box).collect();
+  let mut out = BezPath::new();
+  for (index, contour) in contours.iter().enumerate() {
+    let nest = outermost_around(&contours, index).unwrap_or(index);
+    if contours[nest].area() < 0.0 {
+      out.extend(contour.reverse_subpaths().iter());
+    } else {
+      out.extend(contour.iter());
+    }
+  }
+  out
+}
+
+/// The contour whose nest `index` sits in: the largest of those enclosing it,
+/// or `None` when it enclosed by nothing and so is its own outermost.
+///
+/// Largest, rather than nearest, because it is the outermost contour that says
+/// which way the whole nest runs. A contour is taken as enclosing when it holds
+/// a point of the other — enough to tell nesting apart from lying alongside,
+/// which is all this has to decide.
+fn outermost_around(contours: &[BezPath], index: usize) -> Option<usize> {
+  let probe = first_point(&contours[index])?;
+  contours
+    .iter()
+    .enumerate()
+    .filter(|(other, path)| *other != index && path.contains(probe))
+    .max_by(|(_, a), (_, b)| {
+      a.area()
+        .abs()
+        .partial_cmp(&b.area().abs())
+        .unwrap_or(std::cmp::Ordering::Equal)
+    })
+    .map(|(other, _)| other)
+}
+
+/// Re-orient the contours of an even-odd path so that filling it with the
+/// non-zero rule gives the same result.
+///
+/// TrueType only knows non-zero winding, so an even-odd path whose hole happens
+/// to wind the same way as its outer contour would otherwise come out solid. A
+/// contour nested an odd number of deep is a hole and must wind against its
+/// container; one nested an even number of deep is solid and must wind with the
+/// outermost contours.
+fn to_nonzero_winding(path: &BezPath) -> BezPath {
+  let contours = split_contours(path);
+  if contours.len() < 2 {
+    return path.clone();
+  }
 
   let mut out = BezPath::new();
   for (index, contour) in contours.iter().enumerate() {
     let Some(probe) = first_point(contour) else {
       continue;
     };
-    let around = contours
+    let depth = contours
       .iter()
       .enumerate()
-      .filter(|(other, _)| *other != index && boxes[*other].contains(probe))
-      .map(|(_, other)| other.winding(probe));
+      .filter(|(other_index, other)| *other_index != index && other.contains(probe))
+      .count();
 
-    let solid = if even_odd {
-      // Contours at even depth are solid, odd depth are holes.
-      around.filter(|winding| *winding != 0).count() % 2 == 0
+    // Contours at even depth all share one orientation, odd depth the other.
+    if (depth % 2 == 0) == (contour.area() > 0.0) {
+      out.extend(contour.iter());
     } else {
-      // The ink already covering this contour, its own turn aside.
-      let outside: i32 = around.sum();
-      let own = if contour.area() > 0.0 { 1 } else { -1 };
-      // A hole is where the contour's own turn cancels what covers it. When
-      // both sides are inked the contour draws nothing either way, and
-      // counting it solid is what leaves the covered region covered.
-      outside + own != 0
-    };
-    out.extend(oriented(contour, solid).iter());
+      out.extend(contour.reverse_subpaths());
+    }
   }
   out
-}
-
-/// Turn a contour so it winds positive when it is solid, negative when it is a
-/// hole.
-fn oriented(contour: &BezPath, solid: bool) -> BezPath {
-  if (contour.area() > 0.0) == solid {
-    contour.clone()
-  } else {
-    contour.reverse_subpaths()
-  }
 }
 
 /// Split a path into one `BezPath` per contour.
@@ -952,6 +995,50 @@ mod tests {
           assert_ne!(with_ring.winding(at), 0, "the ring ate the panel at {at:?}");
         }
       }
+    }
+  }
+
+  #[test]
+  fn a_line_drawn_into_a_stroked_outline_leaves_the_inside_empty() {
+    // The telegram plane: one stroked outline with a fold drawn into it. The
+    // fold's ink lies over the outline's inner edge, so nothing local says that
+    // edge was the boundary of a hole — only the nest it belongs to does. Judge
+    // the edge on its own and the plane fills in solid.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                    stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+                  <path d="M4 4h16v16H4Z M12 12 4 4"/>
+                </svg>"##,
+    );
+    // Well inside the square and clear of the diagonal, so only the outline
+    // itself could have put ink here.
+    assert_eq!(
+      o.path.winding(Point::new(700.0, 200.0)),
+      0,
+      "the outline should enclose a hole, not a filled square"
+    );
+    // The outline itself is still drawn.
+    assert_ne!(o.path.winding(Point::new(167.0, 633.0)), 0);
+  }
+
+  #[test]
+  fn subpaths_wound_against_each_other_all_stay_ink() {
+    // The cobol gear: teeth and lettering share one `<path>` and run opposite
+    // ways. Each fills on its own, so both are ink — but the teeth sit on a rim
+    // drawn by another path, and backwards they eat notches out of it.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path fill="#000" d="M4 4h16v16H4Z"/>
+                  <path fill="#000" d="M0 10v4h6v-4Z M18 10h6v4h-6Z"/>
+                </svg>"##,
+    );
+    // Where each tab laps onto the panel, both are ink and must stay ink.
+    for x in [200.0, 800.0] {
+      assert_ne!(
+        o.path.winding(Point::new(x, 300.0)),
+        0,
+        "a tab lapping the panel at x = {x} should not cut into it"
+      );
     }
   }
 

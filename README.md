@@ -139,10 +139,14 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
   of filling in.
 - **Overlapping shapes are unioned, not cancelled.** Everything an icon is built
   from lands in one non-zero-filled path, where two contours that happen to turn
-  opposite ways subtract instead of adding. So every contour is re-wound before
-  it is merged — solid one way, holes the other — and shapes only ever add up.
-  Without it, an icon fattened by stroking a shape in its own fill color comes
-  out hollow, and a mark laid over a panel eats a hole through it.
+  opposite ways subtract instead of adding. Which way round the artwork drew
+  something is not part of what it meant, so before shapes are merged each
+  contour — together with everything nested inside it — is turned the same way.
+  Reversing a whole nest at once leaves what it fills untouched, so shapes only
+  ever add up. Without it, an icon fattened by stroking a shape in its own fill
+  color comes out hollow, a mark laid over a panel eats a hole through it, and a
+  gear whose teeth and lettering are one `<path>` drawn against each other loses
+  the teeth into the rim.
 - **White and faint washes are treated as paper, not ink.** A glyph has neither
   color nor opacity, so a white shape — or a shape at low opacity used as a
   tint — cannot be drawn as itself. What it means depends on what is under it:
