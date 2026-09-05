@@ -77,6 +77,12 @@ pub enum Problem {
   Masked,
   /// Nothing drawable came out of the file.
   Empty,
+  /// The file is not SVG a parser will take — truncated, or not SVG at all.
+  Unreadable,
+  /// The artwork is so much wider than it is tall that its outline runs past
+  /// what a glyph can hold. Coordinates are 16-bit and the height is mapped
+  /// onto the em, so the width has nowhere to go.
+  TooWide,
 }
 
 impl Problem {
@@ -93,6 +99,13 @@ impl Problem {
       Problem::Empty => {
         "nothing drawable in the file; it may use an SVG feature a font cannot represent"
       }
+      Problem::Unreadable => {
+        "the file could not be read as SVG; it may be truncated or not an SVG at all"
+      }
+      Problem::TooWide => {
+        "the artwork is more than 32 times wider than it is tall, which puts its outline \
+                 past the 16-bit coordinates a glyph is stored in; crop it or split it up"
+      }
     }
   }
 }
@@ -105,7 +118,18 @@ impl Problem {
 /// their proportions.
 pub fn load(file: &Path, color: Color) -> Result<Outline> {
   let data = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
-  parse(&data, &file.display().to_string(), color)
+  // A file the parser will not take is one more icon that cannot become a
+  // glyph, and belongs with the others rather than stopping the build where
+  // `--on-error skip` cannot reach it.
+  Ok(
+    parse(&data, &file.display().to_string(), color).unwrap_or_else(|_| Outline {
+      path: BezPath::new(),
+      advance: 0,
+      problem: Some(Problem::Unreadable),
+      layers: Vec::new(),
+      coloring: Coloring::Single,
+    }),
+  )
 }
 
 /// A color no icon would choose, used to mark `currentColor` so it can still
@@ -217,12 +241,19 @@ pub(crate) fn parse(data: &[u8], source: &str, color: Color) -> Result<Outline> 
 
   let scale = f64::from(UNITS_PER_EM) / f64::from(size.height());
   let path = cubics_to_quads(&flatten(&drawn, scale));
+  // Glyph coordinates are 16-bit, and the height is mapped onto the em, so a
+  // wide enough icon runs off the end of what a glyph can store. Left to
+  // itself, write-fonts rounds the overflow away and the artwork is quietly
+  // chopped off partway across.
+  let too_wide = f64::from(size.width()) * scale > f64::from(i16::MAX);
   let coloring = classify(&drawn, color);
   let layers = match coloring {
     Coloring::Single => Vec::new(),
     Coloring::Mixed | Coloring::Fixed => build_layers(&drawn, scale),
   };
-  let problem = if found.raster {
+  let problem = if too_wide {
+    Some(Problem::TooWide)
+  } else if found.raster {
     Some(Problem::RasterImage)
   } else if found.masked {
     Some(Problem::Masked)
@@ -1469,6 +1500,27 @@ mod tests {
       0,
       "and the middle of the mark is body"
     );
+  }
+
+  #[test]
+  fn artwork_too_wide_for_a_glyph_is_reported_rather_than_chopped() {
+    // Coordinates are 16-bit and the height is mapped onto the em, so past
+    // about 32:1 the width has nowhere to go. Left alone, the rounding that
+    // writes the glyph clamps it and the artwork is cut off partway across.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4000 100">
+                  <rect width="4000" height="100" fill="#000"/>
+                </svg>"##,
+    );
+    assert_eq!(o.problem, Some(Problem::TooWide));
+
+    // And a merely wide icon is still perfectly buildable.
+    let wide = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 100">
+                  <rect width="240" height="100" fill="#000"/>
+                </svg>"##,
+    );
+    assert_eq!(wide.problem, None);
   }
 
   #[test]

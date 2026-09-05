@@ -149,6 +149,26 @@ impl Manifest {
     self.retired.remove(&codepoint);
   }
 
+  /// The name of the icon the record currently gives `codepoint` to, if any.
+  ///
+  /// A retired codepoint has no holder: it is reserved so it is never handed
+  /// out again, but nothing is using it, so nothing clashes with taking it back
+  /// by name.
+  pub fn holder(&self, codepoint: char) -> Option<&str> {
+    self
+      .icons
+      .values()
+      .find(|entry| entry.codepoint == codepoint)
+      .map(|entry| entry.name.as_str())
+      .or_else(|| {
+        self
+          .legacy
+          .iter()
+          .find(|(_, held)| **held == codepoint)
+          .map(|(name, _)| name.as_str())
+      })
+  }
+
   /// Every codepoint the manifest has ever handed out, including to icons
   /// that are no longer in the folder and to slots vacated by a move.
   pub fn reserved(&self) -> impl Iterator<Item = char> + '_ {

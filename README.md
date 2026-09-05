@@ -135,6 +135,9 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
   Lucide, Tabler) come through as solid shapes. A font can only fill.
   `stroke-dasharray` is cut before the outline is taken, so a dotted rule stays
   a row of dots rather than becoming a bar.
+- **Artwork much wider than it is tall is refused.** Glyph coordinates are
+  16-bit and the height is mapped onto the em, so past about 32:1 the width has
+  nowhere left to go and the outline would be quietly cut off partway across.
 - **A shape with no inside is dropped.** SVG fills a path black unless told
   otherwise, so a line drawn with only a `stroke` arrives carrying a black fill
   as well. It paints nothing — a line has no inside — but counted as a color it
@@ -464,6 +467,24 @@ following sort order.
 
 The number stays until the file is renamed, which is still the better answer:
 `map-pin-2` says nothing about what the icon is.
+
+## How many icons fit
+
+Codepoints are handed out inside the Private Use Area the build starts in, and
+stay there: past the end of it are characters that already mean something else,
+so a font that ran on would claim codepoints that are not its to claim. From
+the default start of U+E900 that is **4096 icons**, and a codepoint retired with
+a deleted icon is never handed out again, so the budget only shrinks.
+
+A set that outgrows it can start lower, or move to a private use *plane*, which
+holds 65534:
+
+```bash
+icofon build ./icons -o dist --start F0000
+```
+
+Running out is an error naming the icon it stopped at, not a font that quietly
+maps its last icons onto CJK ideographs.
 
 ## Options
 

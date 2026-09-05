@@ -148,7 +148,18 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
 
   let (glyf, loca, loca_format) = glyf.build();
   let bounds = bounds.unwrap_or_default();
-  let num_glyphs = metrics.len() as u16;
+  // A font addresses its glyphs with a u16, so the count is a hard ceiling
+  // rather than something to truncate past: a colored icon costs a glyph per
+  // layer as well as its own, so a large set reaches this sooner than its icon
+  // count suggests.
+  let num_glyphs = u16::try_from(metrics.len()).map_err(|_| {
+    anyhow::anyhow!(
+      "{} glyphs is more than a font can address; a font holds at most {} \
+             (colored icons cost one glyph per color as well as their own)",
+      metrics.len(),
+      u16::MAX
+    )
+  })?;
   let max_advance = metrics.iter().map(|m| m.advance).max().unwrap_or(0);
   let average_advance =
     (metrics.iter().map(|m| u32::from(m.advance)).sum::<u32>() / u32::from(num_glyphs)) as i16;
@@ -208,7 +219,12 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
     ul_unicode_range_2: unicode_range_2(icons),
     ach_vend_id: Tag::new(b"NONE"),
     fs_selection: SelectionFlags::REGULAR,
-    us_first_char_index: icons.iter().map(|i| i.codepoint as u32).min().unwrap_or(0) as u16,
+    us_first_char_index: icons
+      .iter()
+      .map(|i| i.codepoint as u32)
+      .min()
+      .unwrap_or(0)
+      .min(u32::from(u16::MAX)) as u16,
     us_last_char_index: icons
       .iter()
       .map(|i| i.codepoint as u32)

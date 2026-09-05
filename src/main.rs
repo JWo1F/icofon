@@ -392,17 +392,19 @@ fn watch(settings: &config::Build) -> Result<()> {
   watcher.watch(&settings.source, RecursiveMode::Recursive)?;
   println!("watching {} — ^C to stop", settings.source.display());
 
-  loop {
-    // Editors touch a file several times per save, so wait for the flurry to
-    // stop before building rather than building once per event.
-    let first = rx.recv();
-    if first.is_err() {
-      break;
+  // Editors touch a file several times per save, so wait for the flurry to
+  // stop before building rather than building once per event.
+  while let Ok(first) = rx.recv() {
+    let mut icons_changed = touches_an_icon(&first);
+    while let Ok(next) = rx.recv_timeout(std::time::Duration::from_millis(150)) {
+      icons_changed |= touches_an_icon(&next);
     }
-    while rx
-      .recv_timeout(std::time::Duration::from_millis(150))
-      .is_ok()
-    {}
+    // The build writes its manifest into the icon folder, so every build lands
+    // an event in the folder being watched. Rebuilding on that would rebuild
+    // forever, one loop per 150ms, for as long as the command was left running.
+    if !icons_changed {
+      continue;
+    }
 
     match build(settings, Write::Files) {
       Ok(report) => println!("{report}"),
@@ -410,6 +412,17 @@ fn watch(settings: &config::Build) -> Result<()> {
     }
   }
   Ok(())
+}
+
+/// Whether a watch event is about an SVG, which is the only kind worth a build.
+fn touches_an_icon(event: &notify::Result<notify::Event>) -> bool {
+  event.as_ref().is_ok_and(|event| {
+    event.paths.iter().any(|path| {
+      path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+    })
+  })
 }
 
 /// Write an icofon.toml describing what a build would do right now.
@@ -481,7 +494,14 @@ fn walk(dir: &Path, group: Option<&str>, out: &mut Vec<SvgFile>) -> Result<()> {
       continue;
     }
 
+    // A link is followed for a file but not for a folder: a folder linking to
+    // one above it has no bottom, and every turn of the loop is a full copy of
+    // the icons under it, each burning a name and a codepoint of its own.
+    let linked = std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink());
     if path.is_dir() {
+      if linked {
+        continue;
+      }
       let nested = match group {
         Some(parent) => format!("{parent}/{name}"),
         None => name,
@@ -558,26 +578,42 @@ fn load_icons(
   // that have since been deleted, so a codepoint is never reused.
   for codepoint in manifest.reserved() {
     if let Some(owner) = pinned_by.get(&codepoint).map(|index| &named[*index]) {
-      // The pin wins, but only silently when it agrees with the record.
-      if manifest.get(&owner.key, &owner.name) != Some(codepoint) {
-        bail!(
-          "U+{:04X} is pinned by a file name but the manifest already gave it to \
-                     another icon; remove the pin or the manifest entry",
-          codepoint as u32
-        );
+      // A pin only clashes when the record hands the codepoint to a *different*
+      // icon. Pinning an icon to the codepoint it already has is how a project
+      // writes the assignment into the file name, and adding the prefix renames
+      // the file — so the record is looked up by what it holds, not by a key
+      // the rename has just changed.
+      match manifest.holder(codepoint) {
+        Some(held_by) if held_by != owner.name => bail!(
+          "U+{:04X} is pinned by the name of '{}' but the manifest already gave it to \
+                     '{held_by}'; remove the pin or the manifest entry",
+          codepoint as u32,
+          owner.name
+        ),
+        _ => {}
       }
     }
     taken.insert(codepoint);
   }
 
+  // Fixed from where the build starts, so the search cannot wander out of the
+  // private area by walking off the end of it.
+  let last = private_use_end(first).unwrap_or(char::MAX);
   let mut next = first;
   let mut icons = Vec::with_capacity(named.len());
   for icon in named {
     let codepoint = match icon.pin.or_else(|| manifest.get(&icon.key, &icon.name)) {
       Some(codepoint) => codepoint,
       None => {
-        let free = next_free(next, &taken)
-          .with_context(|| format!("ran out of codepoints at '{}'", icon.name))?;
+        let free = next_free(next, last, &taken).with_context(|| {
+          format!(
+            "ran out of codepoints at '{}': every slot from U+{:04X} to U+{:04X} is taken. \
+             Codepoints stay inside the private use area the build starts in, because past \
+             its end are characters that already mean something else — start lower with \
+             --start, or use a private use plane (--start F0000) for a set this large",
+            icon.name, first as u32, last as u32
+          )
+        })?;
         taken.insert(free);
         next = char::from_u32(free as u32 + 1).unwrap_or(free);
         free
@@ -610,6 +646,7 @@ fn resolve_names<'a>(
   on_duplicate: OnDuplicate,
 ) -> Result<Vec<Named<'a>>> {
   let mut wanted = Vec::with_capacity(files.len());
+  let mut unnamed: Vec<&Path> = Vec::new();
   for file in files {
     let stem =
       file_stem(&file.path).with_context(|| format!("{} has no file name", file.path.display()))?;
@@ -622,7 +659,11 @@ fn resolve_names<'a>(
       None => label.clone(),
     };
     if base.is_empty() {
-      bail!("{} has no usable icon name", file.path.display());
+      // A CSS class is written in ASCII, so a name with nothing else in it
+      // leaves none. Every one is named at once rather than one per run, the
+      // way clashing names are, so a folder of them is one rename job.
+      unnamed.push(file.path.as_path());
+      continue;
     }
     wanted.push(Wanted {
       file,
@@ -631,6 +672,21 @@ fn resolve_names<'a>(
       label,
       pin,
     });
+  }
+
+  if !unnamed.is_empty() {
+    bail!(
+      "{} icons have no name a CSS class can be written from:\n{}\n\
+             A name reduces to letters, digits and dashes, and these have none left. \
+             Rename them, or put them in a subfolder whose name does — the folder \
+             becomes part of the icon's name.",
+      unnamed.len(),
+      unnamed
+        .iter()
+        .map(|path| format!("  {}", path.display()))
+        .collect::<Vec<_>>()
+        .join("\n")
+    );
   }
 
   if on_duplicate == OnDuplicate::Fail {
@@ -654,11 +710,12 @@ fn resolve_names<'a>(
   }
 
   let mut named = Vec::with_capacity(wanted.len());
+  let mut searched_from: BTreeMap<String, u32> = BTreeMap::new();
   for (want, settled) in wanted.iter().zip(settled) {
     let name = match settled {
       Some(name) => name,
       None => {
-        let name = next_free_name(&want.base, &taken);
+        let name = next_free_name(&want.base, &taken, &mut searched_from);
         if name != want.base {
           eprintln!(
             "'{}' is already taken by {}, so {} is called '{name}'",
@@ -800,23 +857,60 @@ fn problem_list(broken: &[Icon]) -> String {
 }
 
 /// Find a free name for `base`, numbering it `-2`, `-3`, … if it is taken.
-fn next_free_name(base: &str, taken: &BTreeMap<String, &Path>) -> String {
+fn next_free_name(
+  base: &str,
+  taken: &BTreeMap<String, &Path>,
+  from: &mut BTreeMap<String, u32>,
+) -> String {
   if !taken.contains_key(base) {
     return base.to_string();
   }
   // Starts at 2 so the pair reads as `map-pin` and `map-pin-2`. Skips any
   // number a real file already claimed, so `map-pin-2.svg` keeps its name.
-  (2..)
+  //
+  // Where the last search for this base ended is remembered, because the
+  // numbers before it are taken by definition: without that, a folder of files
+  // all reducing to one name costs a search of every number for every file.
+  let next = from.entry(base.to_string()).or_insert(2);
+  let name = (*next..)
     .map(|suffix| format!("{base}-{suffix}"))
     .find(|candidate| !taken.contains_key(candidate))
-    .expect("the range is unbounded, so some candidate is free")
+    .expect("the range is unbounded, so some candidate is free");
+  *next = name
+    .rsplit_once('-')
+    .and_then(|(_, suffix)| suffix.parse::<u32>().ok())
+    .map_or(*next, |suffix| suffix + 1);
+  name
 }
 
-/// The first codepoint at or after `from` that no icon has claimed.
-fn next_free(from: char, taken: &BTreeSet<char>) -> Option<char> {
-  (from as u32..=char::MAX as u32)
+/// The first codepoint at or after `from`, and no later than `last`, that no
+/// icon has claimed.
+///
+/// The bound is what keeps assignment inside the Private Use Area the build
+/// started in. Past its end are real characters — U+F900 begins CJK
+/// Compatibility Ideographs — and a font that maps its icons there claims
+/// codepoints that already mean something else. It has to come from where the
+/// build started rather than from where the search is: once the search has
+/// stepped past the end of the area, it is no longer in one to ask about.
+fn next_free(from: char, last: char, taken: &BTreeSet<char>) -> Option<char> {
+  (from as u32..=last as u32)
     .filter_map(char::from_u32)
     .find(|c| !taken.contains(c))
+}
+
+/// The end of the Private Use Area holding `codepoint`, if it is in one.
+fn private_use_end(codepoint: char) -> Option<char> {
+  // The three private areas: the block in the BMP, and the two whole planes.
+  const AREAS: [(u32, u32); 3] = [
+    (0xE000, 0xF8FF),
+    (0xF_0000, 0xF_FFFD),
+    (0x10_0000, 0x10_FFFD),
+  ];
+  let at = codepoint as u32;
+  AREAS
+    .iter()
+    .find(|(first, last)| at >= *first && at <= *last)
+    .and_then(|(_, last)| char::from_u32(*last))
 }
 
 /// Split an optional `uE901-` / `U+E901_` prefix off a file stem.
@@ -1320,8 +1414,115 @@ mod tests {
     )
     .unwrap_err()
     .to_string();
-    assert!(error.contains("pinned by a file name"), "{error}");
+    assert!(error.contains("pinned by the name of 'badge'"), "{error}");
+    assert!(error.contains("already gave it to 'heart'"), "{error}");
     std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn an_icon_may_be_pinned_to_the_codepoint_it_already_has() {
+    // Writing the assignment into the file name is how a project makes it
+    // explicit, and renaming the file is how that is done — so the record has
+    // to be looked up by what it holds, not by a key the rename just changed.
+    let mut manifest = Manifest::default();
+    manifest.insert("star.svg", "star", '\u{e900}');
+
+    let dir = icon_folder("pin-own", &["uE900-star.svg"]);
+    let files = collect_svgs(&dir).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &manifest,
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .expect("pinning an icon to its own codepoint is not a clash");
+    assert_eq!(icons[0].name, "star");
+    assert_eq!(icons[0].codepoint, '\u{e900}');
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn a_folder_linking_to_one_above_it_is_not_walked_into() {
+    // Following it has no bottom: every turn of the loop is another whole copy
+    // of the icons, each taking a name and a codepoint of its own.
+    let dir = icon_folder("symlink-loop", &["star.svg", "sub/leaf.svg"]);
+    std::os::unix::fs::symlink("..", dir.join("sub/loop")).unwrap();
+
+    let files = collect_svgs(&dir).unwrap();
+    let names: Vec<_> = files
+      .iter()
+      .map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned())
+      .collect();
+    assert_eq!(
+      names.len(),
+      2,
+      "one icon each, not a tower of copies: {names:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn a_file_that_is_not_svg_is_an_icon_that_cannot_become_a_glyph() {
+    // Rather than an error out of the parser, which lands before --on-error
+    // has any say and so cannot be skipped.
+    let dir = icon_folder("unreadable", &["good.svg"]);
+    std::fs::write(dir.join("broken.svg"), b"<svg viewBox=\"0 0 24 2").unwrap();
+
+    let files = collect_svgs(&dir).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .expect("a broken file is triaged, not a build failure");
+    let kept = triage(icons, true).expect("the good icon still builds");
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].name, "good");
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn every_icon_without_a_usable_name_is_named_at_once() {
+    // One rename job, the way clashing names are reported, rather than one
+    // failed build per file.
+    let dir = icon_folder("no-name", &["звезда.svg", "сердце.svg", "star.svg"]);
+    let files = collect_svgs(&dir).unwrap();
+    let error = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("звезда.svg"), "{error}");
+    assert!(error.contains("сердце.svg"), "{error}");
+    assert!(error.contains("2 icons have no name"), "{error}");
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn codepoints_stop_at_the_end_of_the_private_use_area() {
+    // Past U+F8FF are real characters, and a font that maps icons there claims
+    // codepoints that already mean something else.
+    assert_eq!(private_use_end('\u{e900}'), Some('\u{f8ff}'));
+    assert_eq!(private_use_end('\u{f0000}'), Some('\u{ffffd}'));
+    assert_eq!(private_use_end('A'), None);
+
+    let taken: BTreeSet<char> = ('\u{f8fe}'..='\u{f8ff}').collect();
+    assert_eq!(
+      next_free('\u{f8fe}', '\u{f8ff}', &taken),
+      None,
+      "no room left in the area"
+    );
+    assert_eq!(
+      next_free('\u{f8fd}', '\u{f8ff}', &BTreeSet::new()),
+      Some('\u{f8fd}')
+    );
   }
 
   #[test]
