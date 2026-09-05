@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <defs>
+    <clipPath id="halfmoon">
+      <rect x="0" y="0" width="24" height="12"/>
+    </clipPath>
+  </defs>
+  <circle cx="12" cy="12" r="9" fill="currentColor" clip-path="url(#halfmoon)"/>
+  <path d="M3 14h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -44,6 +44,286 @@
       "name": "check",
       "codepoint": "e900"
     },
+    "color/currentcolor-lower.svg": {
+      "name": "color-currentcolor-lower",
+      "codepoint": "e90f"
+    },
+    "color/currentcolor-upper.svg": {
+      "name": "color-currentcolor-upper",
+      "codepoint": "e910"
+    },
+    "color/fill-opacity.svg": {
+      "name": "color-fill-opacity",
+      "codepoint": "e911"
+    },
+    "color/hex3.svg": {
+      "name": "color-hex3",
+      "codepoint": "e912"
+    },
+    "color/hex8.svg": {
+      "name": "color-hex8",
+      "codepoint": "e913"
+    },
+    "color/hsl-func.svg": {
+      "name": "color-hsl-func",
+      "codepoint": "e914"
+    },
+    "color/linear-gradient.svg": {
+      "name": "color-linear-gradient",
+      "codepoint": "e915"
+    },
+    "color/named-color.svg": {
+      "name": "color-named-color",
+      "codepoint": "e916"
+    },
+    "color/radial-gradient.svg": {
+      "name": "color-radial-gradient",
+      "codepoint": "e917"
+    },
+    "color/rgb-func.svg": {
+      "name": "color-rgb-func",
+      "codepoint": "e918"
+    },
+    "color/three-tone.svg": {
+      "name": "color-three-tone",
+      "codepoint": "e919"
+    },
+    "color/two-tone.svg": {
+      "name": "color-two-tone",
+      "codepoint": "e91a"
+    },
+    "color/wash-tint.svg": {
+      "name": "color-wash-tint",
+      "codepoint": "e91b"
+    },
+    "color/white-knockout.svg": {
+      "name": "color-white-knockout",
+      "codepoint": "e91c"
+    },
+    "duotone/battery.svg": {
+      "name": "duotone-battery",
+      "codepoint": "e91d"
+    },
+    "duotone/camera.svg": {
+      "name": "duotone-camera",
+      "codepoint": "e91e"
+    },
+    "duotone/chart.svg": {
+      "name": "duotone-chart",
+      "codepoint": "e91f"
+    },
+    "duotone/clock.svg": {
+      "name": "duotone-clock",
+      "codepoint": "e920"
+    },
+    "duotone/mail.svg": {
+      "name": "duotone-mail",
+      "codepoint": "e921"
+    },
+    "duotone/pin.svg": {
+      "name": "duotone-pin",
+      "codepoint": "e922"
+    },
+    "filled/bell.svg": {
+      "name": "filled-bell",
+      "codepoint": "e923"
+    },
+    "filled/bookmark.svg": {
+      "name": "filled-bookmark",
+      "codepoint": "e924"
+    },
+    "filled/folder.svg": {
+      "name": "filled-folder",
+      "codepoint": "e925"
+    },
+    "filled/heart.svg": {
+      "name": "filled-heart",
+      "codepoint": "e926"
+    },
+    "filled/lock.svg": {
+      "name": "filled-lock",
+      "codepoint": "e927"
+    },
+    "filled/play.svg": {
+      "name": "filled-play",
+      "codepoint": "e928"
+    },
+    "filled/user.svg": {
+      "name": "filled-user",
+      "codepoint": "e929"
+    },
+    "geometry/circle.svg": {
+      "name": "geometry-circle",
+      "codepoint": "e92a"
+    },
+    "geometry/dot-grid.svg": {
+      "name": "geometry-dot-grid",
+      "codepoint": "e92b"
+    },
+    "geometry/ellipse.svg": {
+      "name": "geometry-ellipse",
+      "codepoint": "e92c"
+    },
+    "geometry/line-cross.svg": {
+      "name": "geometry-line-cross",
+      "codepoint": "e92d"
+    },
+    "geometry/polygon-star-nonzero.svg": {
+      "name": "geometry-polygon-star-nonzero",
+      "codepoint": "e92e"
+    },
+    "geometry/polygon-star.svg": {
+      "name": "geometry-polygon-star",
+      "codepoint": "e92f"
+    },
+    "geometry/polyline-chart.svg": {
+      "name": "geometry-polyline-chart",
+      "codepoint": "e930"
+    },
+    "geometry/rect-plain.svg": {
+      "name": "geometry-rect-plain",
+      "codepoint": "e931"
+    },
+    "geometry/rect-rounded.svg": {
+      "name": "geometry-rect-rounded",
+      "codepoint": "e932"
+    },
+    "geometry/squircle.svg": {
+      "name": "geometry-squircle",
+      "codepoint": "e933"
+    },
+    "naming/123-numeric-start.svg": {
+      "name": "naming-123-numeric-start",
+      "codepoint": "e934"
+    },
+    "naming/U+E9F2-pinned-heart.svg": {
+      "name": "naming-pinned-heart",
+      "codepoint": "e9f2"
+    },
+    "naming/UPPER CASE.svg": {
+      "name": "naming-upper-case",
+      "codepoint": "e935"
+    },
+    "naming/dots.in.name.svg": {
+      "name": "naming-dots-in-name",
+      "codepoint": "e936"
+    },
+    "naming/snake_case_name.svg": {
+      "name": "naming-snake-case-name",
+      "codepoint": "e937"
+    },
+    "naming/spaced name (2).svg": {
+      "name": "naming-spaced-name-2",
+      "codepoint": "e938"
+    },
+    "naming/uE9F1-pinned-star.svg": {
+      "name": "naming-pinned-star",
+      "codepoint": "e9f1"
+    },
+    "naming/Стрелка-cyrillic.svg": {
+      "name": "naming-cyrillic",
+      "codepoint": "e939"
+    },
+    "outline/calendar.svg": {
+      "name": "outline-calendar",
+      "codepoint": "e93a"
+    },
+    "outline/cloud.svg": {
+      "name": "outline-cloud",
+      "codepoint": "e93b"
+    },
+    "outline/download.svg": {
+      "name": "outline-download",
+      "codepoint": "e93c"
+    },
+    "outline/link.svg": {
+      "name": "outline-link",
+      "codepoint": "e93d"
+    },
+    "outline/message.svg": {
+      "name": "outline-message",
+      "codepoint": "e93e"
+    },
+    "outline/search.svg": {
+      "name": "outline-search",
+      "codepoint": "e93f"
+    },
+    "outline/shield.svg": {
+      "name": "outline-shield",
+      "codepoint": "e940"
+    },
+    "paths/arc-flags.svg": {
+      "name": "paths-arc-flags",
+      "codepoint": "e941"
+    },
+    "paths/arcs.svg": {
+      "name": "paths-arcs",
+      "codepoint": "e942"
+    },
+    "paths/compact.svg": {
+      "name": "paths-compact",
+      "codepoint": "e943"
+    },
+    "paths/cubic-smooth.svg": {
+      "name": "paths-cubic-smooth",
+      "codepoint": "e944"
+    },
+    "paths/exponent.svg": {
+      "name": "paths-exponent",
+      "codepoint": "e945"
+    },
+    "paths/implicit-lineto.svg": {
+      "name": "paths-implicit-lineto",
+      "codepoint": "e946"
+    },
+    "paths/quadratic.svg": {
+      "name": "paths-quadratic",
+      "codepoint": "e947"
+    },
+    "paths/relative.svg": {
+      "name": "paths-relative",
+      "codepoint": "e948"
+    },
+    "paths/staircase.svg": {
+      "name": "paths-staircase",
+      "codepoint": "e949"
+    },
+    "paths/subpaths.svg": {
+      "name": "paths-subpaths",
+      "codepoint": "e94a"
+    },
+    "ratio/banner.svg": {
+      "name": "ratio-banner",
+      "codepoint": "e94b"
+    },
+    "ratio/column.svg": {
+      "name": "ratio-column",
+      "codepoint": "e94c"
+    },
+    "ratio/double-height.svg": {
+      "name": "ratio-double-height",
+      "codepoint": "e94d"
+    },
+    "ratio/golden.svg": {
+      "name": "ratio-golden",
+      "codepoint": "e94e"
+    },
+    "ratio/half-width.svg": {
+      "name": "ratio-half-width",
+      "codepoint": "e94f"
+    },
+    "ratio/micro.svg": {
+      "name": "ratio-micro",
+      "codepoint": "e950"
+    },
+    "ratio/ultrawide.svg": {
+      "name": "ratio-ultrawide",
+      "codepoint": "e951"
+    },
+    "ratio/wordmark.svg": {
+      "name": "ratio-wordmark",
+      "codepoint": "e952"
+    },
     "shapes/blocks.svg": {
       "name": "shapes-blocks",
       "codepoint": "e902"
@@ -60,9 +340,177 @@
       "name": "shapes-tinted-ring",
       "codepoint": "e906"
     },
+    "strokes/bold.svg": {
+      "name": "strokes-bold",
+      "codepoint": "e953"
+    },
+    "strokes/cap-butt.svg": {
+      "name": "strokes-cap-butt",
+      "codepoint": "e954"
+    },
+    "strokes/cap-round.svg": {
+      "name": "strokes-cap-round",
+      "codepoint": "e955"
+    },
+    "strokes/cap-square.svg": {
+      "name": "strokes-cap-square",
+      "codepoint": "e956"
+    },
+    "strokes/dashed.svg": {
+      "name": "strokes-dashed",
+      "codepoint": "e957"
+    },
+    "strokes/dotted.svg": {
+      "name": "strokes-dotted",
+      "codepoint": "e958"
+    },
+    "strokes/fill-and-stroke.svg": {
+      "name": "strokes-fill-and-stroke",
+      "codepoint": "e959"
+    },
+    "strokes/hairline.svg": {
+      "name": "strokes-hairline",
+      "codepoint": "e95a"
+    },
+    "strokes/join-bevel.svg": {
+      "name": "strokes-join-bevel",
+      "codepoint": "e95b"
+    },
+    "strokes/join-miter.svg": {
+      "name": "strokes-join-miter",
+      "codepoint": "e95c"
+    },
+    "strokes/join-round.svg": {
+      "name": "strokes-join-round",
+      "codepoint": "e95d"
+    },
+    "strokes/open-arc.svg": {
+      "name": "strokes-open-arc",
+      "codepoint": "e95e"
+    },
+    "structure/clip-path.svg": {
+      "name": "structure-clip-path",
+      "codepoint": "e95f"
+    },
+    "structure/commented.svg": {
+      "name": "structure-commented",
+      "codepoint": "e960"
+    },
+    "structure/deep-groups.svg": {
+      "name": "structure-deep-groups",
+      "codepoint": "e961"
+    },
+    "structure/group-opacity.svg": {
+      "name": "structure-group-opacity",
+      "codepoint": "e962"
+    },
+    "structure/inline-style.svg": {
+      "name": "structure-inline-style",
+      "codepoint": "e963"
+    },
+    "structure/style-block.svg": {
+      "name": "structure-style-block",
+      "codepoint": "e964"
+    },
+    "structure/style-over-attr.svg": {
+      "name": "structure-style-over-attr",
+      "codepoint": "e965"
+    },
+    "structure/symbol-use.svg": {
+      "name": "structure-symbol-use",
+      "codepoint": "e966"
+    },
+    "structure/title-desc.svg": {
+      "name": "structure-title-desc",
+      "codepoint": "e967"
+    },
+    "structure/use-ref.svg": {
+      "name": "structure-use-ref",
+      "codepoint": "e968"
+    },
+    "transforms/flip.svg": {
+      "name": "transforms-flip",
+      "codepoint": "e969"
+    },
+    "transforms/matrix.svg": {
+      "name": "transforms-matrix",
+      "codepoint": "e96a"
+    },
+    "transforms/nested.svg": {
+      "name": "transforms-nested",
+      "codepoint": "e96b"
+    },
+    "transforms/pinwheel.svg": {
+      "name": "transforms-pinwheel",
+      "codepoint": "e96c"
+    },
+    "transforms/rotate-origin.svg": {
+      "name": "transforms-rotate-origin",
+      "codepoint": "e96d"
+    },
+    "transforms/rotate.svg": {
+      "name": "transforms-rotate",
+      "codepoint": "e96e"
+    },
+    "transforms/scale.svg": {
+      "name": "transforms-scale",
+      "codepoint": "e96f"
+    },
+    "transforms/skew-x.svg": {
+      "name": "transforms-skew-x",
+      "codepoint": "e970"
+    },
+    "transforms/skew-y.svg": {
+      "name": "transforms-skew-y",
+      "codepoint": "e971"
+    },
+    "transforms/translate.svg": {
+      "name": "transforms-translate",
+      "codepoint": "e972"
+    },
     "uE9F0-Star Filled.svg": {
       "name": "star-filled",
       "codepoint": "e9f0"
+    },
+    "viewbox/fractional.svg": {
+      "name": "viewbox-fractional",
+      "codepoint": "e973"
+    },
+    "viewbox/large-512.svg": {
+      "name": "viewbox-large-512",
+      "codepoint": "e974"
+    },
+    "viewbox/negative-origin.svg": {
+      "name": "viewbox-negative-origin",
+      "codepoint": "e975"
+    },
+    "viewbox/no-viewbox.svg": {
+      "name": "viewbox-no-viewbox",
+      "codepoint": "e976"
+    },
+    "viewbox/origin-offset.svg": {
+      "name": "viewbox-origin-offset",
+      "codepoint": "e977"
+    },
+    "viewbox/percent-size.svg": {
+      "name": "viewbox-percent-size",
+      "codepoint": "e978"
+    },
+    "viewbox/preserve-aspect.svg": {
+      "name": "viewbox-preserve-aspect",
+      "codepoint": "e979"
+    },
+    "viewbox/px-units.svg": {
+      "name": "viewbox-px-units",
+      "codepoint": "e97a"
+    },
+    "viewbox/thousand.svg": {
+      "name": "viewbox-thousand",
+      "codepoint": "e97b"
+    },
+    "viewbox/tiny-16.svg": {
+      "name": "viewbox-tiny-16",
+      "codepoint": "e97c"
     }
   }
 }

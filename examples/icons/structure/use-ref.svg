@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <defs>
+    <path id="tooth" d="M11 2h2v4h-2Z"/>
+  </defs>
+  <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="2"/>
+  <use href="#tooth" fill="currentColor"/>
+  <use href="#tooth" fill="currentColor" transform="rotate(90 12 12)"/>
+  <use href="#tooth" fill="currentColor" transform="rotate(180 12 12)"/>
+  <use href="#tooth" fill="currentColor" transform="rotate(270 12 12)"/>
+</svg>
