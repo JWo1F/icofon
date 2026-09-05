@@ -142,7 +142,23 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
 - **Cubic curves become quadratics**, which is all TrueType can store.
 - **`fill-rule="evenodd"` is honored.** Fonts only do non-zero winding, so
   even-odd contours are re-oriented by nesting depth; holes stay holes instead
-  of filling in.
+  of filling in. Where nesting cannot answer — a contour that crosses itself,
+  like a five-pointed star drawn in one stroke — the region is resolved
+  properly, so the middle of the star stays empty.
+- **`clip-path` cuts.** A clip is an intersection, and its boundary runs partly
+  along one shape and partly along the other, so the two are cut where they
+  cross. A clip that surrounds everything it clips — which is what a drawing
+  tool writes out to fence off its artboard — is recognised and left alone, so
+  the artwork keeps the curves it was drawn with. `<mask>` is still refused:
+  it decides per pixel how much of a shape survives, and an outline has no
+  such control.
+- **A faint wash is read for what it stands in for.** Duotone sets draw a body
+  at a fraction of full strength and the detail over it, and a glyph has no
+  opacity to give the body. Where the full-strength drawing already traces the
+  body's outline, the wash says nothing more and is dropped — a battery keeps
+  its outline. Where it does not, the wash *is* the silhouette, so it becomes
+  the body and the marks inside it are cut out of it: a camera keeps its shape,
+  with the lens as a hole.
 - **Overlapping shapes are unioned, not cancelled.** Everything an icon is built
   from lands in one non-zero-filled path, where two contours that happen to turn
   opposite ways subtract instead of adding. Which way round the artwork drew

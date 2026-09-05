@@ -5,6 +5,7 @@ mod css;
 mod font;
 mod html;
 mod manifest;
+mod region;
 mod svg;
 mod webfont;
 

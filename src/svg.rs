@@ -1,13 +1,15 @@
 //! Turning an SVG file into a single closed outline expressed in font units.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use kurbo::{BezPath, CubicBez, PathEl, Point, Shape};
+use kurbo::{BezPath, CubicBez, Line, PathEl, Point, Rect, Shape};
 use usvg::tiny_skia_path::{self, PathSegment};
 
 use crate::config::Color;
 use crate::font::{ASCENDER, UNITS_PER_EM};
+use crate::region;
 
 /// How far a quadratic approximation may stray from the original cubic, in font
 /// units. A thousandth of the em is far below what any rasterizer can show.
@@ -205,7 +207,7 @@ pub(crate) fn parse(data: &[u8], source: &str, color: Color) -> Result<Outline> 
 
   let mut drawn = Vec::new();
   let mut found = Findings::default();
-  collect(tree.root(), 1.0, &mut drawn, &mut found);
+  collect(tree.root(), 1.0, &[], &mut drawn, &mut found);
   // A shape with no inside paints nothing, and one arrives whenever a line is
   // drawn with only a `stroke`: SVG fills a path black unless told otherwise,
   // so the line turns up carrying a black fill as well. Left in, it costs the
@@ -213,29 +215,8 @@ pub(crate) fn parse(data: &[u8], source: &str, color: Color) -> Result<Outline> 
   // the CSS `color`, and to bring its faint layers up to full strength.
   drawn.retain(|filled| encloses_area(&filled.path));
 
-  // Paper only means anything next to ink. An icon drawn entirely in white,
-  // or entirely as a faint wash, is simply a light icon and must still be
-  // drawn — so the paper rule only applies when something else is full
-  // strength.
-  let has_ink = drawn.iter().any(|filled| !filled.background);
   let scale = f64::from(UNITS_PER_EM) / f64::from(size.height());
-  let mut path = BezPath::new();
-  for filled in &drawn {
-    let mut piece = BezPath::new();
-    append_scaled(&mut piece, &filled.path, scale);
-    piece = canonical_winding(&piece, filled.even_odd);
-    if filled.background && has_ink {
-      // Shapes are visited in paint order, so what a paper shape means is
-      // decided by what is already under it.
-      if let Some(hole) = knocked_out_of(&piece, &path) {
-        path.extend(hole);
-      }
-      continue;
-    }
-    path.extend(piece);
-  }
-
-  let path = cubics_to_quads(&path);
+  let path = cubics_to_quads(&flatten(&drawn, scale));
   let coloring = classify(&drawn, color);
   let layers = match coloring {
     Coloring::Single => Vec::new(),
@@ -264,9 +245,13 @@ pub(crate) fn parse(data: &[u8], source: &str, color: Color) -> Result<Outline> 
 struct Filled {
   path: tiny_skia_path::Path,
   even_odd: bool,
-  /// Paper shapes are not ink; what they mean depends on what is under them.
-  /// Only the flattened outline cares — a color layer keeps its own color.
-  background: bool,
+  /// The clip regions this shape is drawn through, outermost first, in the
+  /// same coordinates as `path`. Empty for all but a handful of icons.
+  clips: Vec<Arc<tiny_skia_path::Path>>,
+  /// Paper and wash shapes are not ink; what they mean depends on what else the
+  /// icon draws. Only the flattened outline cares — a color layer has real
+  /// color and opacity, and keeps both.
+  role: Role,
   paint: LayerPaint,
 }
 
@@ -282,14 +267,32 @@ struct Findings {
   masked: bool,
 }
 
-fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut Findings) {
+fn collect(
+  group: &usvg::Group,
+  alpha: f32,
+  clips: &[Arc<tiny_skia_path::Path>],
+  out: &mut Vec<Filled>,
+  found: &mut Findings,
+) {
   if group.mask().is_some() {
     found.masked = true;
   }
 
+  // A clip on a group applies to everything under it, so it is carried down
+  // rather than applied here: a shape is cut once, when it is scaled, and only
+  // if the clip really cuts it.
+  let mut clips = clips.to_vec();
+  if let Some(clip) = group.clip_path() {
+    // A clip is written in the space of the element that refers to it, and
+    // usvg leaves that element's transform off the clip's own contents — so a
+    // group that flips or scales its children flips and scales its clip too,
+    // and the two have to be put back together here.
+    clips.extend(clip_regions(clip, group.abs_transform()));
+  }
+
   for node in group.children() {
     match node {
-      usvg::Node::Group(child) => collect(child, alpha * child.opacity().get(), out, found),
+      usvg::Node::Group(child) => collect(child, alpha * child.opacity().get(), &clips, out, found),
       usvg::Node::Path(path) => {
         if !path.is_visible() {
           continue;
@@ -306,7 +309,8 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
             out.push(Filled {
               path: p,
               even_odd: fill.rule() == usvg::FillRule::EvenOdd,
-              background: is_background(fill.paint(), alpha),
+              clips: clips.clone(),
+              role: role_of(fill.paint(), alpha),
               paint: layer_paint(fill.paint(), alpha),
             });
           }
@@ -319,7 +323,8 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
           out.push(Filled {
             path: p,
             even_odd: false,
-            background: is_background(stroke.paint(), alpha),
+            clips: clips.clone(),
+            role: role_of(stroke.paint(), alpha),
             paint: layer_paint(stroke.paint(), alpha),
           });
         }
@@ -329,6 +334,70 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
       _ => {}
     }
   }
+}
+
+/// The shapes a `<clipPath>` keeps, in absolute coordinates.
+///
+/// A clip is the union of its children, and a clip may itself be clipped, which
+/// is an intersection. Both are collected here as a list to intersect the
+/// clipped shape with in turn — a single shape, which is what a clip almost
+/// always is, then costs nothing to assemble.
+fn clip_regions(
+  clip: &usvg::ClipPath,
+  referrer: tiny_skia_path::Transform,
+) -> Vec<Arc<tiny_skia_path::Path>> {
+  fn shapes(
+    group: &usvg::Group,
+    into: tiny_skia_path::Transform,
+    out: &mut Vec<tiny_skia_path::Path>,
+  ) {
+    for node in group.children() {
+      match node {
+        usvg::Node::Group(child) => shapes(child, into, out),
+        usvg::Node::Path(path) => {
+          if let Some(p) = path
+            .data()
+            .clone()
+            .transform(into.pre_concat(path.abs_transform()))
+          {
+            out.push(p);
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+
+  let into = referrer.pre_concat(clip.transform());
+  let mut union = Vec::new();
+  shapes(clip.root(), into, &mut union);
+  // Several shapes in one clip are a union, which is not something a list of
+  // intersections can say. Joining them into one path leaves that to the
+  // non-zero rule, which is what the clip itself is filled by.
+  let joined = if union.len() == 1 {
+    union.pop()
+  } else {
+    let mut builder = tiny_skia_path::PathBuilder::new();
+    for shape in &union {
+      for segment in shape.segments() {
+        match segment {
+          PathSegment::MoveTo(p) => builder.move_to(p.x, p.y),
+          PathSegment::LineTo(p) => builder.line_to(p.x, p.y),
+          PathSegment::QuadTo(c, p) => builder.quad_to(c.x, c.y, p.x, p.y),
+          PathSegment::CubicTo(c1, c2, p) => builder.cubic_to(c1.x, c1.y, c2.x, c2.y, p.x, p.y),
+          PathSegment::Close => builder.close(),
+        }
+      }
+    }
+    builder.finish()
+  };
+
+  let mut regions: Vec<Arc<tiny_skia_path::Path>> = Vec::new();
+  regions.extend(joined.map(Arc::new));
+  if let Some(nested) = clip.clip_path() {
+    regions.extend(clip_regions(nested, into));
+  }
+  regions
 }
 
 /// Decide how an icon is colored, under the policy the build was given.
@@ -372,9 +441,10 @@ fn classify(drawn: &[Filled], policy: Color) -> Coloring {
 fn build_layers(drawn: &[Filled], scale: f64) -> Vec<Layer> {
   let mut layers: Vec<Layer> = Vec::new();
   for filled in drawn {
-    let mut piece = BezPath::new();
-    append_scaled(&mut piece, &filled.path, scale);
-    let piece = cubics_to_quads(&canonical_winding(&piece, filled.even_odd));
+    let Some(piece) = outline_of(filled, scale) else {
+      continue;
+    };
+    let piece = cubics_to_quads(&piece);
     if piece.is_empty() {
       continue;
     }
@@ -452,32 +522,42 @@ fn layer_paint(paint: &usvg::Paint, alpha: f32) -> LayerPaint {
   }
 }
 
-/// Whether a paint reads as paper rather than ink.
+/// What a shape is for, which decides how a glyph can carry it.
 ///
 /// A glyph is ink or nothing — it has neither color nor opacity — so two kinds
-/// of paint cannot be drawn as themselves:
-///
-/// * **White**, which would put ink exactly where the artwork wanted none. A
-///   badge built as a white panel with dark lettering would be buried under a
-///   solid block.
-/// * **A faint wash**, a shape at low opacity used as a tint behind the real
-///   mark. Drawn at full strength it swallows whatever it was sitting behind.
-///
-/// Both are handled the same way by the caller: over existing ink they become a
-/// knock-out, and over nothing they are dropped.
-fn is_background(paint: &usvg::Paint, alpha: f32) -> bool {
-  // Below half strength a shape is a tint, not the mark itself.
+/// of paint cannot be drawn as themselves, and they do not want the same
+/// treatment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+  /// Drawn as itself.
+  Ink,
+  /// **White**, which would put ink exactly where the artwork wanted none. A
+  /// badge built as a white panel with dark lettering would be buried under a
+  /// solid block. Over ink it is a knock-out; over nothing it is the paper the
+  /// design sits on and is dropped.
+  Paper,
+  /// **A faint wash**: a shape at a fraction of full strength, which duotone
+  /// icon sets use for the body an icon is built on. It has no ink of its own,
+  /// so a glyph can only make it the whole body or nothing at all — see
+  /// [`wash_body`].
+  Wash,
+}
+
+fn role_of(paint: &usvg::Paint, alpha: f32) -> Role {
+  // Below half strength a shape is a wash, not the mark itself.
   const FAINT: f32 = 0.5;
   const NEAR_WHITE: u8 = 0xF0;
 
   if alpha < FAINT {
-    return true;
+    return Role::Wash;
   }
   match paint {
-    usvg::Paint::Color(color) => {
-      color.red >= NEAR_WHITE && color.green >= NEAR_WHITE && color.blue >= NEAR_WHITE
+    usvg::Paint::Color(color)
+      if color.red >= NEAR_WHITE && color.green >= NEAR_WHITE && color.blue >= NEAR_WHITE =>
+    {
+      Role::Paper
     }
-    _ => false,
+    _ => Role::Ink,
   }
 }
 
@@ -609,6 +689,213 @@ fn append_scaled(out: &mut BezPath, src: &tiny_skia_path::Path, scale: f64) {
   }
 }
 
+/// Whether the path crosses itself anywhere.
+///
+/// Only a crossing makes the even-odd rule say something that nesting cannot,
+/// so this decides which of the two conversions runs. It is deliberately
+/// approximate in the safe direction: the curves are flattened first, so a
+/// crossing that is missed only leaves the cheaper conversion in place — the
+/// answer it gives is the one that was given before there was a choice.
+fn crosses_itself(path: &BezPath) -> bool {
+  // Fine enough that a real crossing survives flattening, coarse enough that
+  // the count of segments stays workable.
+  const FLATNESS: f64 = 0.25;
+
+  let mut edges: Vec<Line> = Vec::new();
+  // Where each contour starts in `edges`, so that a contour's own ends are not
+  // read as a crossing where they meet.
+  let mut contours: Vec<usize> = vec![0];
+  let mut current = Point::ZERO;
+  let mut start = Point::ZERO;
+  kurbo::flatten(path.iter(), FLATNESS, |element| match element {
+    PathEl::MoveTo(p) => {
+      contours.push(edges.len());
+      start = p;
+      current = p;
+    }
+    PathEl::LineTo(p) => {
+      edges.push(Line::new(current, p));
+      current = p;
+    }
+    PathEl::ClosePath => {
+      if current != start {
+        edges.push(Line::new(current, start));
+      }
+      current = start;
+    }
+    _ => {}
+  });
+
+  let neighbours = |a: usize, b: usize| {
+    // Consecutive edges share a point by construction, as do the two ends of a
+    // contour, and touching is not crossing.
+    if b == a + 1 {
+      return true;
+    }
+    contours
+      .windows(2)
+      .any(|range| range[0] == a && b + 1 == range[1])
+      || (a + 1 == edges.len() && contours.last() == Some(&b))
+  };
+
+  let boxes: Vec<Rect> = edges.iter().map(|edge| edge.bounding_box()).collect();
+  for a in 0..edges.len() {
+    for b in (a + 1)..edges.len() {
+      if neighbours(a, b) || !boxes[a].overlaps(boxes[b]) {
+        continue;
+      }
+      if let Some(at) = edges[a].crossing_point(edges[b])
+        && strictly_within(edges[a], at)
+        && strictly_within(edges[b], at)
+      {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+/// Whether a crossing point falls inside a segment rather than at its ends.
+fn strictly_within(edge: Line, at: Point) -> bool {
+  const ENDS: f64 = 1e-6;
+  let length = edge.p1 - edge.p0;
+  let along = (at - edge.p0).dot(length) / length.hypot2();
+  along > ENDS && along < 1.0 - ENDS
+}
+
+/// Flatten every shape into the one outline a plain glyph is.
+///
+/// A glyph is ink or nothing, so the shapes that are neither have to be read
+/// for what they were standing in for — see [`Role`].
+fn flatten(drawn: &[Filled], scale: f64) -> BezPath {
+  let shapes: Vec<(Role, BezPath)> = drawn
+    .iter()
+    .filter_map(|filled| Some((filled.role, outline_of(filled, scale)?)))
+    .collect();
+
+  // Paper and wash only mean anything next to ink. An icon drawn entirely in
+  // white, or entirely as a faint wash, is simply a light icon and must still
+  // be drawn.
+  let ink: Vec<&BezPath> = shapes
+    .iter()
+    .filter(|(role, _)| *role == Role::Ink)
+    .map(|(_, piece)| piece)
+    .collect();
+  if ink.is_empty() {
+    return shapes
+      .into_iter()
+      .map(|(_, piece)| piece)
+      .fold(BezPath::new(), |mut all, piece| {
+        all.extend(piece);
+        all
+      });
+  }
+
+  // A wash that the ink already traces is standing in for a silhouette the icon
+  // draws anyway, so it has nothing left to say. The rest are bodies, and a
+  // mark drawn inside a body is what tells one body from another: it becomes a
+  // hole rather than more ink, which is the only way a glyph can show it.
+  let bodies: Vec<&BezPath> = shapes
+    .iter()
+    .filter(|(role, piece)| *role == Role::Wash && !traced_by(piece, &ink))
+    .map(|(_, piece)| piece)
+    .collect();
+
+  let mut path = BezPath::new();
+  let mut cuts: Vec<BezPath> = Vec::new();
+  for (role, piece) in &shapes {
+    match role {
+      Role::Ink if bodies.iter().any(|body| encloses(body, piece)) => cuts.push(piece.clone()),
+      Role::Ink => path.extend(piece.iter()),
+      // Shapes are visited in paint order, so what a paper shape means is
+      // decided by what is already under it.
+      Role::Paper => {
+        if let Some(hole) = knocked_out_of(piece, &path) {
+          path.extend(hole);
+        }
+      }
+      Role::Wash => {}
+    }
+  }
+  for body in &bodies {
+    if let Some(cut) = region::subtract(body, &cuts) {
+      path.extend(cut);
+    }
+  }
+  path
+}
+
+/// Whether the ink already draws the outline this wash would.
+///
+/// A duotone icon is drawn twice: once faint for the body, once at full
+/// strength for the outline over it. Where that second drawing is there, the
+/// wash adds nothing a glyph can show; where it is not — a camera body, an
+/// envelope — the wash is the only thing carrying the shape.
+///
+/// Judged on the outline the two enclose, since the ink is a stroke laid along
+/// the wash's edge and so runs a stroke-width wider on every side.
+fn traced_by(wash: &BezPath, ink: &[&BezPath]) -> bool {
+  // A twentieth of the em, which is wider than any icon's stroke and narrower
+  // than the gap between a body and a mark drawn inside it.
+  const ALONG_THE_EDGE: f64 = UNITS_PER_EM as f64 / 20.0;
+
+  let wanted = wash.bounding_box();
+  ink.iter().any(|piece| {
+    let edge = piece.bounding_box();
+    (edge.x0 - wanted.x0).abs() < ALONG_THE_EDGE
+      && (edge.y0 - wanted.y0).abs() < ALONG_THE_EDGE
+      && (edge.x1 - wanted.x1).abs() < ALONG_THE_EDGE
+      && (edge.y1 - wanted.y1).abs() < ALONG_THE_EDGE
+  })
+}
+
+/// Whether `mark` is drawn inside `body` rather than merely crossing it.
+///
+/// Only a mark the body surrounds is one the body was drawn to carry. Two
+/// shapes that lap over each other are two shapes, and both are ink.
+fn encloses(body: &BezPath, mark: &BezPath) -> bool {
+  body.bounding_box().contains_rect(mark.bounding_box())
+}
+
+/// One collected shape as an outline in font units: scaled, cut to the clips it
+/// was drawn through, and wound so that it adds to its neighbours.
+///
+/// `None` when nothing is left, which a clip can genuinely do.
+fn outline_of(filled: &Filled, scale: f64) -> Option<BezPath> {
+  let mut piece = BezPath::new();
+  append_scaled(&mut piece, &filled.path, scale);
+  let mut piece = canonical_winding(&piece, filled.even_odd);
+
+  for clip in &filled.clips {
+    let mut region = BezPath::new();
+    append_scaled(&mut region, clip, scale);
+    let region = canonical_winding(&region, false);
+
+    // A clip that surrounds what it clips is doing nothing, and that is what
+    // almost every clip in the wild is: a drawing tool fencing off its
+    // artboard. Recognising it keeps the resolver away from artwork that had
+    // no question to ask, and keeps its curves exactly as they were drawn.
+    if region::as_rectangle(&region).is_some_and(|rect| rect.contains_rect(piece.bounding_box())) {
+      continue;
+    }
+
+    let cut = region::intersect(&piece, &region)?;
+    // What a clip leaves cannot reach past either the shape or the clip. If it
+    // does, the resolver has lost its way on some knot of tangencies, and the
+    // shape as drawn is a far better answer than the clip's own outline —
+    // which is what a failure here looks like.
+    let within = |a: Rect, b: Rect| {
+      const SLACK: f64 = 1.0;
+      a.x0 >= b.x0 - SLACK && a.y0 >= b.y0 - SLACK && a.x1 <= b.x1 + SLACK && a.y1 <= b.y1 + SLACK
+    };
+    let bounds = cut.bounding_box();
+    if within(bounds, piece.bounding_box()) && within(bounds, region.bounding_box()) {
+      piece = cut;
+    }
+  }
+  (!piece.is_empty()).then_some(piece)
+}
+
 /// Turn a shape's contours the same way round as every other shape's, without
 /// changing what the shape itself fills.
 ///
@@ -639,7 +926,21 @@ fn canonical_winding(path: &BezPath, even_odd: bool) -> BezPath {
   // other: the rule itself has to be translated, since a glyph only knows
   // non-zero. What comes out is nested cleanly, which is what follows expects.
   let path = if even_odd {
-    to_nonzero_winding(path)
+    // Nesting decides which contours are holes, and that is enough whenever
+    // the contours are simple closed loops. A contour that crosses itself has
+    // no such answer — the middle of a five-pointed star is inside the one
+    // contour twice — so there the region is resolved properly instead.
+    if crosses_itself(path) {
+      match region::even_odd_region(path) {
+        Some(resolved) => resolved,
+        // The resolver came back with nothing from a path that drew something,
+        // so it could not make sense of the artwork. Nesting is a worse answer
+        // than the truth but a better one than a blank glyph.
+        None => region::even_odd_by_nesting(path),
+      }
+    } else {
+      region::even_odd_by_nesting(path)
+    }
   } else {
     path.clone()
   };
@@ -685,41 +986,6 @@ fn outermost_around(contours: &[BezPath], index: usize) -> Option<usize> {
         .unwrap_or(std::cmp::Ordering::Equal)
     })
     .map(|(other, _)| other)
-}
-
-/// Re-orient the contours of an even-odd path so that filling it with the
-/// non-zero rule gives the same result.
-///
-/// TrueType only knows non-zero winding, so an even-odd path whose hole happens
-/// to wind the same way as its outer contour would otherwise come out solid. A
-/// contour nested an odd number of deep is a hole and must wind against its
-/// container; one nested an even number of deep is solid and must wind with the
-/// outermost contours.
-fn to_nonzero_winding(path: &BezPath) -> BezPath {
-  let contours = split_contours(path);
-  if contours.len() < 2 {
-    return path.clone();
-  }
-
-  let mut out = BezPath::new();
-  for (index, contour) in contours.iter().enumerate() {
-    let Some(probe) = first_point(contour) else {
-      continue;
-    };
-    let depth = contours
-      .iter()
-      .enumerate()
-      .filter(|(other_index, other)| *other_index != index && other.contains(probe))
-      .count();
-
-    // Contours at even depth all share one orientation, odd depth the other.
-    if (depth % 2 == 0) == (contour.area() > 0.0) {
-      out.extend(contour.iter());
-    } else {
-      out.extend(contour.reverse_subpaths());
-    }
-  }
-  out
 }
 
 /// Split a path into one `BezPath` per contour.
@@ -1071,6 +1337,138 @@ mod tests {
         }
       }
     }
+  }
+
+  #[test]
+  fn an_even_odd_star_that_crosses_itself_keeps_its_middle_empty() {
+    // One contour, five crossings. Nesting has nothing to say about it — the
+    // middle is inside the same contour twice — so the region is resolved.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <polygon fill-rule="evenodd" fill="#000"
+                           points="12 2 4.6 21 21.4 8.9 2.6 8.9 19.4 21"/>
+                </svg>"##,
+    );
+    assert_eq!(
+      o.path.winding(Point::new(500.0, 380.0)),
+      0,
+      "the middle is a hole"
+    );
+    assert_ne!(
+      o.path.winding(Point::new(500.0, 700.0)),
+      0,
+      "the top point is ink"
+    );
+  }
+
+  #[test]
+  fn a_clip_path_cuts_what_it_clips() {
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <defs><clipPath id="half"><rect x="0" y="0" width="24" height="12"/></clipPath></defs>
+                  <circle cx="12" cy="12" r="9" fill="#000" clip-path="url(#half)"/>
+                </svg>"##,
+    );
+    // The clip keeps the top half of the disc, which is the top of the em.
+    assert_ne!(
+      o.path.winding(Point::new(500.0, 500.0)),
+      0,
+      "the kept half is ink"
+    );
+    assert_eq!(
+      o.path.winding(Point::new(500.0, 100.0)),
+      0,
+      "the cut half is gone"
+    );
+  }
+
+  #[test]
+  fn a_clip_that_surrounds_the_artwork_leaves_it_exactly_as_drawn() {
+    // Every drawing tool fences its artboard off with one of these, so it has
+    // to cost nothing — not even the re-cutting a resolver would do.
+    let clipped = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <defs><clipPath id="all"><rect width="24" height="24"/></clipPath></defs>
+                  <g clip-path="url(#all)"><circle cx="12" cy="12" r="9" fill="#000"/></g>
+                </svg>"##,
+    );
+    let plain = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="9" fill="#000"/>
+                </svg>"##,
+    );
+    assert_eq!(clipped.path, plain.path);
+  }
+
+  #[test]
+  fn a_clip_is_read_in_the_space_of_whatever_refers_to_it() {
+    // The clip covers the top half of its own coordinates, and the group flips
+    // them, so what it really keeps is the bottom half. Read in the wrong space
+    // it cuts the wrong half away — or, as here, nothing at all.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <defs><clipPath id="top"><rect width="24" height="12"/></clipPath></defs>
+                  <g clip-path="url(#top)" transform="matrix(1 0 0 -1 0 24)">
+                    <circle cx="12" cy="12" r="9" fill="#000"/>
+                  </g>
+                </svg>"##,
+    );
+    assert_eq!(
+      o.path.winding(Point::new(500.0, 500.0)),
+      0,
+      "the flipped-away half is gone"
+    );
+    assert_ne!(
+      o.path.winding(Point::new(500.0, 100.0)),
+      0,
+      "the kept half is ink"
+    );
+  }
+
+  #[test]
+  fn a_wash_the_ink_already_traces_is_dropped() {
+    // The duotone battery: a faint body with its own outline stroked over it.
+    // The outline says everything the body would, so the body adds nothing.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect x="4" y="4" width="16" height="16" fill="#000" opacity="0.2"/>
+                  <rect x="4" y="4" width="16" height="16" fill="none"
+                        stroke="#000" stroke-width="2"/>
+                </svg>"##,
+    );
+    assert_eq!(
+      o.path.winding(Point::new(500.0, 300.0)),
+      0,
+      "an outline, not a block"
+    );
+  }
+
+  #[test]
+  fn a_wash_the_ink_does_not_trace_becomes_the_body() {
+    // The duotone camera: a faint body carrying the silhouette, with a mark
+    // drawn inside it. Dropped, the icon is a lone mark and loses its subject;
+    // painted over, the mark disappears into it. The mark becomes a hole.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect x="2" y="2" width="20" height="20" fill="#000" opacity="0.2"/>
+                  <circle cx="12" cy="12" r="4" fill="none" stroke="#000" stroke-width="2"/>
+                </svg>"##,
+    );
+    assert_ne!(
+      o.path.winding(Point::new(200.0, 600.0)),
+      0,
+      "the body is drawn"
+    );
+    assert_eq!(
+      o.path.winding(Point::new(500.0, 425.0)),
+      0,
+      "the mark is cut out of it"
+    );
+    assert_ne!(
+      o.path.winding(Point::new(500.0, 300.0)),
+      0,
+      "and the middle of the mark is body"
+    );
   }
 
   #[test]

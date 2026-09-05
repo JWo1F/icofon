@@ -23,6 +23,7 @@ flate2 = "1.1.10"
 brotli = "8.0.4"
 toml = "1.1.4"
 notify = "8.2.0"
+flo_curves = "0.8.1"
 
 [dev-dependencies]
 read-fonts = "0.43"
