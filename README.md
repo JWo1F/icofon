@@ -155,13 +155,20 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
   the artwork keeps the curves it was drawn with. `<mask>` is still refused:
   it decides per pixel how much of a shape survives, and an outline has no
   such control.
-- **A faint wash is read for what it stands in for.** Duotone sets draw a body
-  at a fraction of full strength and the detail over it, and a glyph has no
-  opacity to give the body. Where the full-strength drawing already traces the
+- **A faint wash is kept as a layer, and read for what it stands in for in the
+  outline.** Duotone sets draw a body at a fraction of full strength and the
+  detail over it. A plain glyph has no opacity to give the body, so an icon that
+  draws `currentColor` at two strengths is written as COLR layers instead, each
+  with its own alpha, and renders exactly as the SVG does — still following the
+  CSS `color` throughout. The flattened outline every glyph also carries is what
+  a renderer without COLR falls back to, and there the wash has to be read for
+  what it stood in for: where the full-strength drawing already traces the
   body's outline, the wash says nothing more and is dropped — a battery keeps
   its outline. Where it does not, the wash *is* the silhouette, so it becomes
   the body and the marks inside it are cut out of it: a camera keeps its shape,
-  with the lens as a hole.
+  with the lens as a hole. One strength throughout is not a duotone and carries
+  no such relationship: an icon drawn wholly as a wash is just a light icon, and
+  is drawn at full strength.
 - **Overlapping shapes are unioned, not cancelled.** Everything an icon is built
   from lands in one non-zero-filled path, where two contours that happen to turn
   opposite ways subtract instead of adding. Which way round the artwork drew
@@ -172,9 +179,9 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
   color comes out hollow, a mark laid over a panel eats a hole through it, and a
   gear whose teeth and lettering are one `<path>` drawn against each other loses
   the teeth into the rim.
-- **White and faint washes are treated as paper, not ink.** A glyph has neither
-  color nor opacity, so a white shape — or a shape at low opacity used as a
-  tint — cannot be drawn as itself. What it means depends on what is under it:
+- **In the flattened outline, white and faint washes are paper, not ink.** A
+  plain glyph has neither color nor opacity, so a white shape — or a shape at
+  low opacity used as a tint — cannot be drawn as itself. What it means depends on what is under it:
   over existing artwork it is a knock-out and becomes a hole (the tick cut out
   of a filled circle, a wordmark cut out of a brand panel), and over nothing it
   is background and is dropped, rather than painted as a solid block that buries
@@ -208,11 +215,22 @@ ruby.svg          fill="#e53935"          -> COLR: stays Ruby red
 mastercard.svg    red + orange + white    -> COLR layers, keeps its colors
 circle-check.svg  blue disc + currentColor tick
                                           -> COLR: disc stays blue, tick follows CSS color
+battery.svg       currentColor body at 0.18 under a currentColor outline
+                                          -> COLR v1: keeps the wash, still follows CSS color
 ```
 
 Color icons still carry the flattened monochrome outline as their base glyph,
 which is what a renderer without COLR support falls back to. The preview page
 marks them "fixed color" so it is clear which ones will not follow your CSS.
+
+Opacity is kept as well. A layer painted in a color the artwork names carries
+that color's alpha in the palette, which COLR v0 has room for. A layer painted
+`currentColor` at less than full strength does not — the palette entry reserved
+for the text color has no alpha — so those icons alone are written as COLR v1
+paints, which do. Only the icons that need it: everything else stays v0, and the
+version the table declares follows from whether anything did. A duotone icon
+drawn wholly in `currentColor` is therefore still recolorable, and falls back to
+its flattened outline where COLR v1 is not understood.
 
 Gradients are reduced to their first stop, since a layer is one flat color.
 
@@ -261,8 +279,10 @@ survives and so cannot be reduced to an outline, and a file that yields
 `--on-error skip` builds the font without them and lists what it left out on
 stderr.
 
-What is *not* caught, because the shape still converts: gradients and partial
-opacity flatten to solid fills, since a glyph is monochrome.
+What is *not* caught, because the shape still converts: gradients reduce to
+their first stop, and partial opacity survives only where the icon has COLR
+layers to carry it — in the flattened outline it cannot, since a plain glyph is
+monochrome.
 
 ## Adding icons later
 

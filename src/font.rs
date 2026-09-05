@@ -5,7 +5,10 @@ use write_fonts::{
   FontBuilder,
   tables::{
     cmap::Cmap,
-    colr::{BaseGlyph, Colr, Layer as ColrLayer},
+    colr::{
+      BaseGlyph, BaseGlyphList, BaseGlyphPaint, Colr, Layer as ColrLayer, LayerList, Paint,
+      PaintColrLayers, PaintGlyph, PaintSolid,
+    },
     cpal::{ColorRecord, Cpal},
     glyf::{Bbox, GlyfLocaBuilder, Glyph, SimpleGlyph},
     head::{Flags, Head},
@@ -16,7 +19,9 @@ use write_fonts::{
     os2::{Os2, SelectionFlags},
     post::Post,
   },
-  types::{FWord, Fixed, GlyphId, GlyphId16, LongDateTime, NameId, Tag, UfWord, Version16Dot16},
+  types::{
+    F2Dot14, FWord, Fixed, GlyphId, GlyphId16, LongDateTime, NameId, Tag, UfWord, Version16Dot16,
+  },
 };
 
 use crate::svg::{LayerPaint, Outline};
@@ -30,6 +35,12 @@ pub const UNITS_PER_EM: u16 = 1000;
 pub const ASCENDER: i16 = 800;
 /// Bottom of the em box.
 pub const DESCENDER: i16 = -200;
+
+/// One layer's strength as COLR writes it: 0 is invisible, 1 is the color at
+/// full.
+fn opacity(alpha: u8) -> F2Dot14 {
+  F2Dot14::from_f32(f32::from(alpha) / 255.0)
+}
 
 /// Seconds between the TrueType epoch (1904-01-01) and the Unix epoch.
 const MAC_EPOCH_OFFSET: i64 = 2_082_844_800;
@@ -284,6 +295,11 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
 struct ColorTables {
   base_glyphs: Vec<BaseGlyph>,
   layers: Vec<ColrLayer>,
+  /// The COLR v1 side of the table: one paint graph per icon that needs a
+  /// layer painted at less than full strength. Only those icons go here — a
+  /// v0 record says everything the others need, and is understood by more.
+  base_paints: Vec<BaseGlyphPaint>,
+  paints: Vec<Paint>,
   /// Distinct fixed colors, in the order first seen; the index into this is
   /// the CPAL palette index.
   palette: Vec<(u8, u8, u8, u8)>,
@@ -297,6 +313,17 @@ impl ColorTables {
     if layers.is_empty() {
       return Ok(());
     }
+    // A COLR v0 layer is a glyph and a palette index and nothing more, and the
+    // index reserved for the text color has no alpha to give. So an icon that
+    // draws the text color at less than full strength — a duotone body under
+    // its own outline — can only be said in COLR v1, where a paint carries its
+    // own alpha. Everything else stays v0.
+    if layers
+      .iter()
+      .any(|(_, paint)| matches!(paint, LayerPaint::Foreground { a } if *a != u8::MAX))
+    {
+      return self.add_translucent(base_gid, layers, name);
+    }
 
     let first = u16::try_from(self.layers.len())
       .with_context(|| format!("too many color layers by the time '{name}' was reached"))?;
@@ -305,7 +332,7 @@ impl ColorTables {
 
     for (gid, paint) in layers {
       let palette_index = match paint {
-        LayerPaint::Foreground => FOREGROUND_PALETTE_INDEX,
+        LayerPaint::Foreground { .. } => FOREGROUND_PALETTE_INDEX,
         LayerPaint::Fixed { r, g, b, a } => self.color_index((*r, *g, *b, *a), name)?,
       };
       self
@@ -316,6 +343,44 @@ impl ColorTables {
     self
       .base_glyphs
       .push(BaseGlyph::new(small_gid(base_gid, name)?, first, count));
+    Ok(())
+  }
+
+  /// The same icon as a COLR v1 paint graph: one `PaintGlyph` per layer, each
+  /// filled with a `PaintSolid` that carries the layer's own alpha.
+  fn add_translucent(
+    &mut self,
+    base_gid: usize,
+    layers: &[(usize, LayerPaint)],
+    name: &str,
+  ) -> Result<()> {
+    let first = u32::try_from(self.paints.len())
+      .with_context(|| format!("too many color layers by the time '{name}' was reached"))?;
+    // A v1 paint graph counts its layers in a single byte.
+    let count = u8::try_from(layers.len()).with_context(|| {
+      format!("'{name}' is drawn in more than 255 runs of color, which COLR cannot hold")
+    })?;
+
+    for (gid, paint) in layers {
+      let solid = match paint {
+        LayerPaint::Foreground { a } => PaintSolid::new(FOREGROUND_PALETTE_INDEX, opacity(*a)),
+        // A palette entry carries its own alpha, so the paint asks for all of
+        // what the entry already is.
+        LayerPaint::Fixed { r, g, b, a } => PaintSolid::new(
+          self.color_index((*r, *g, *b, *a), name)?,
+          F2Dot14::from_f32(1.0),
+        ),
+      };
+      self.paints.push(Paint::Glyph(PaintGlyph::new(
+        Paint::Solid(solid),
+        small_gid(*gid, name)?,
+      )));
+    }
+
+    self.base_paints.push(BaseGlyphPaint::new(
+      small_gid(base_gid, name)?,
+      Paint::ColrLayers(PaintColrLayers::new(count, first)),
+    ));
     Ok(())
   }
 
@@ -334,7 +399,7 @@ impl ColorTables {
   }
 
   fn build(self) -> Option<(Colr, Cpal)> {
-    if self.base_glyphs.is_empty() {
+    if self.base_glyphs.is_empty() && self.base_paints.is_empty() {
       return None;
     }
 
@@ -351,12 +416,23 @@ impl ColorTables {
         .collect()
     };
 
-    let colr = Colr::new(
+    let mut colr = Colr::new(
       self.base_glyphs.len() as u16,
       Some(self.base_glyphs),
       Some(self.layers.clone()),
       self.layers.len() as u16,
     );
+    // Written only when something needs it: the version the table declares
+    // follows from whether these are set, and a font of plain color icons
+    // stays a v0 font that every COLR renderer understands.
+    if !self.base_paints.is_empty() {
+      colr.base_glyph_list = Some(BaseGlyphList::new(
+        self.base_paints.len() as u32,
+        self.base_paints,
+      ))
+      .into();
+      colr.layer_list = Some(LayerList::new(self.paints.len() as u32, self.paints)).into();
+    }
     let cpal = Cpal::new(entries, 1, entries, Some(records), vec![0]);
     Some((colr, cpal))
   }
@@ -524,6 +600,50 @@ mod tests {
 
     let cpal = font.cpal().expect("color layers need a palette");
     assert_eq!(cpal.num_palette_entries(), 2);
+  }
+
+  #[test]
+  fn a_wash_in_the_text_color_is_written_as_a_colr_v1_paint() {
+    // A duotone icon drawn wholly in `currentColor`: a body at a fraction of
+    // full strength under an outline at full. COLR v0 layers cannot say that --
+    // the palette entry reserved for the text color has no alpha -- so it goes
+    // in the v1 list, where a paint carries its own.
+    let duotone = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                             <rect x="2" y="2" width="20" height="20" fill="currentColor"
+                                   opacity="0.2"/>
+                             <rect x="2" y="2" width="20" height="20" fill="none"
+                                   stroke="currentColor" stroke-width="2"/>
+                           </svg>"##;
+    let bytes = build(&[icon("battery", '\u{e900}', duotone)], "Test Icons").unwrap();
+    let font = FontRef::new(&bytes).unwrap();
+
+    let colr = font.colr().expect("a wash needs COLR to carry it");
+    assert_eq!(colr.version(), 1);
+    // Nothing is left in the v0 arrays, so a renderer that only knows v0 falls
+    // back to the flattened outline rather than painting the wash solid.
+    assert_eq!(colr.num_base_glyph_records(), 0);
+
+    let list = colr.base_glyph_list().unwrap().unwrap();
+    let records = list.base_glyph_paint_records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].glyph_id().to_u32(), 1);
+
+    let layers = colr.layer_list().unwrap().unwrap();
+    assert_eq!(layers.num_layers(), 2);
+
+    // The bottom layer is the text color at a fifth of full strength.
+    let read_fonts::tables::colr::Paint::Glyph(glyph) = layers.paints().get(0).unwrap() else {
+      panic!("a layer is a glyph filled with a paint");
+    };
+    let read_fonts::tables::colr::Paint::Solid(solid) = glyph.paint().unwrap() else {
+      panic!("the fill is one flat color");
+    };
+    assert_eq!(solid.palette_index(), FOREGROUND_PALETTE_INDEX);
+    assert!(
+      (solid.alpha().to_f32() - 0.2).abs() < 0.01,
+      "{}",
+      solid.alpha().to_f32()
+    );
   }
 
   #[test]

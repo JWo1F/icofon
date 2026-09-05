@@ -19,8 +19,10 @@ const CUBIC_TO_QUAD_ACCURACY: f64 = 0.2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LayerPaint {
   /// Drawn with `currentColor`, so it follows the CSS `color` of whatever the
-  /// icon sits in — the same behavior a plain monochrome glyph has.
-  Foreground,
+  /// icon sits in — the same behavior a plain monochrome glyph has. `a` is how
+  /// much of that color comes through: a duotone icon draws its body in the
+  /// text color at a fraction of full strength.
+  Foreground { a: u8 },
   /// Drawn in a color the artwork names, which is kept as drawn.
   Fixed { r: u8, g: u8, b: u8, a: u8 },
 }
@@ -37,6 +39,13 @@ pub enum Coloring {
   Mixed,
   /// Several colors, all fixed by the artwork. CSS `color` does nothing.
   Fixed,
+}
+
+impl LayerPaint {
+  /// Whether the paint follows the CSS `color` rather than naming one itself.
+  pub fn follows_text(self) -> bool {
+    matches!(self, LayerPaint::Foreground { .. })
+  }
 }
 
 /// One color's worth of an icon. Layers are in paint order, bottom first.
@@ -248,8 +257,11 @@ pub(crate) fn parse(data: &[u8], source: &str, color: Color) -> Result<Outline> 
   let too_wide = f64::from(size.width()) * scale > f64::from(i16::MAX);
   let coloring = classify(&drawn, color);
   let layers = match coloring {
-    Coloring::Single => Vec::new(),
-    Coloring::Mixed | Coloring::Fixed => build_layers(&drawn, scale),
+    // An icon that follows the CSS `color` throughout is still a layered glyph
+    // when it draws that color at two strengths: a plain glyph has no opacity
+    // to give the fainter one, and COLR does.
+    Coloring::Single if color == Color::Recolor || !washed(&drawn) => Vec::new(),
+    _ => build_layers(&drawn, scale),
   };
   let problem = if too_wide {
     Some(Problem::TooWide)
@@ -454,14 +466,37 @@ fn classify(drawn: &[Filled], policy: Color) -> Coloring {
     return Coloring::Single;
   }
   match (
-    seen.contains(&LayerPaint::Foreground),
-    seen.iter().any(|paint| *paint != LayerPaint::Foreground),
+    seen.iter().any(|paint| paint.follows_text()),
+    seen.iter().any(|paint| !paint.follows_text()),
   ) {
     // Nothing fixed to keep: a plain glyph that follows the CSS `color`.
     (_, false) => Coloring::Single,
     (true, true) => Coloring::Mixed,
     (false, true) => Coloring::Fixed,
   }
+}
+
+/// Whether the artwork paints `currentColor` at more than one strength.
+///
+/// A duotone icon built entirely out of `currentColor` — a body at a fraction
+/// of full strength with the detail drawn over it — reads as one paint until
+/// the strengths are told apart. It follows the CSS `color` throughout, so it
+/// is not a color icon; but the two strengths are a relationship, and the only
+/// place a font can hold one is a COLR layer.
+///
+/// A single strength, whatever it is, carries no such relationship: an icon
+/// drawn wholly as a wash is just a light icon, and is drawn at full strength
+/// like any other — which is what [`Role::Wash`] already says.
+fn washed(drawn: &[Filled]) -> bool {
+  let mut strengths: Vec<u8> = Vec::new();
+  for filled in drawn {
+    if let LayerPaint::Foreground { a } = filled.paint
+      && !strengths.contains(&a)
+    {
+      strengths.push(a);
+    }
+  }
+  strengths.len() > 1
 }
 
 /// Split the artwork into one layer per run of shapes sharing a color.
@@ -532,24 +567,26 @@ fn knocked_out_of(white: &BezPath, ink: &BezPath) -> Option<BezPath> {
 /// the choice is which single color best stands for the ramp, and the color it
 /// starts from is the most predictable answer.
 fn layer_paint(paint: &usvg::Paint, alpha: f32) -> LayerPaint {
+  let strength = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
   let opaque = |color: usvg::Color| LayerPaint::Fixed {
     r: color.red,
     g: color.green,
     b: color.blue,
-    a: (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+    a: strength,
   };
+  let text = LayerPaint::Foreground { a: strength };
   match paint {
-    usvg::Paint::Color(color) if *color == FOREGROUND_SENTINEL => LayerPaint::Foreground,
+    usvg::Paint::Color(color) if *color == FOREGROUND_SENTINEL => text,
     usvg::Paint::Color(color) => opaque(*color),
     usvg::Paint::LinearGradient(gradient) => gradient
       .stops()
       .first()
-      .map_or(LayerPaint::Foreground, |stop| opaque(stop.color())),
+      .map_or(text, |stop| opaque(stop.color())),
     usvg::Paint::RadialGradient(gradient) => gradient
       .stops()
       .first()
-      .map_or(LayerPaint::Foreground, |stop| opaque(stop.color())),
-    usvg::Paint::Pattern(_) => LayerPaint::Foreground,
+      .map_or(text, |stop| opaque(stop.color())),
+    usvg::Paint::Pattern(_) => text,
   }
 }
 
@@ -1539,10 +1576,54 @@ mod tests {
                 </svg>"##,
     );
     assert_eq!(o.coloring, Coloring::Single, "one color, and CSS sets it");
-    assert!(o.layers.is_empty());
-    // The wash is dropped rather than painted, so the outline still encloses a
-    // hole instead of a solid block.
+    // Every layer still follows the CSS `color`: the default fill did not
+    // freeze one of them at black.
+    assert!(o.layers.iter().all(|layer| layer.paint.follows_text()));
+    // Nor did it bring the wash up to full strength.
+    assert_eq!(
+      o.layers.first().map(|layer| layer.paint),
+      Some(LayerPaint::Foreground { a: 46 })
+    );
+    // The flattened outline, which is what a renderer without COLR falls back
+    // to, still drops the wash rather than painting it as a solid block.
     assert_eq!(o.path.winding(Point::new(430.0, 300.0)), 0);
+  }
+
+  #[test]
+  fn a_wash_in_the_text_color_is_kept_as_a_layer_of_its_own() {
+    // A duotone icon drawn entirely in `currentColor` follows the CSS `color`
+    // throughout, so it is not a color icon -- but a glyph has no opacity, and
+    // the body at a fraction of full strength is half of what the icon is. It
+    // is carried as COLR layers, which do have one.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect x="2" y="2" width="20" height="20" fill="currentColor" opacity="0.2"/>
+                  <path d="M8 12.5 11 15.5 16.5 9" fill="none" stroke="currentColor"
+                        stroke-width="2.2"/>
+                </svg>"##,
+    );
+    assert_eq!(o.coloring, Coloring::Single);
+    assert_eq!(
+      o.layers.iter().map(|layer| layer.paint).collect::<Vec<_>>(),
+      [
+        LayerPaint::Foreground { a: 51 },
+        LayerPaint::Foreground { a: 255 },
+      ]
+    );
+  }
+
+  #[test]
+  fn one_strength_throughout_is_a_light_icon_rather_than_a_wash() {
+    // Nothing is being held apart from anything, so there is no relationship
+    // for a layer to carry: a glyph drawn at full strength is what this is.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect x="2" y="2" width="20" height="20" fill="currentColor" opacity="0.3"/>
+                  <rect x="6" y="6" width="6" height="6" fill="currentColor" opacity="0.3"/>
+                </svg>"##,
+    );
+    assert_eq!(o.coloring, Coloring::Single);
+    assert!(o.layers.is_empty());
   }
 
   #[test]
@@ -1683,7 +1764,7 @@ mod tests {
           b: 0xB5,
           a: 255
         },
-        LayerPaint::Foreground,
+        LayerPaint::Foreground { a: 255 },
       ]
     );
   }
