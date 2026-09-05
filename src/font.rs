@@ -113,6 +113,13 @@ pub fn build(icons: &[Icon], family: &str) -> Result<Vec<u8>> {
     // renderer without color support falls back to.
     let mut layers = Vec::new();
     for layer in &icon.outline.layers {
+      // An icon painted in one color is its own only layer, so the layer would
+      // be a byte-for-byte copy of the base glyph. Point at the base instead:
+      // a single-color set is otherwise carried twice over.
+      if layer.path == icon.outline.path {
+        layers.push((base_gid, layer.paint));
+        continue;
+      }
       let Ok(glyph) = SimpleGlyph::from_bezpath(&layer.path) else {
         continue;
       };
@@ -433,14 +440,14 @@ mod tests {
       group: None,
       source: name.into(),
       codepoint,
-      outline: crate::svg::parse(svg.as_bytes(), name).unwrap(),
+      outline: crate::svg::parse(svg.as_bytes(), name, crate::config::Color::Keep).unwrap(),
     }
   }
 
   fn square(size: &str) -> String {
     format!(
       r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                  <rect x="4" y="4" width="{size}" height="{size}" fill="#000"/>
+                  <rect x="4" y="4" width="{size}" height="{size}" fill="currentColor"/>
                 </svg>"##
     )
   }

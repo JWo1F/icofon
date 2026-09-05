@@ -145,7 +145,7 @@ mod tests {
       group: None,
       source: name.into(),
       codepoint,
-      outline: svg::parse(svg.as_bytes(), name).unwrap(),
+      outline: svg::parse(svg.as_bytes(), name, crate::config::Color::Keep).unwrap(),
     }
   }
 

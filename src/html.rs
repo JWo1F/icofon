@@ -568,7 +568,7 @@ mod tests {
   /// name, and the label is the file part that is left.
   fn grouped(label: &str, codepoint: char, group: Option<&str>) -> Icon {
     let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <rect width="24" height="24" fill="#000"/>
+                        <rect width="24" height="24" fill="currentColor"/>
                       </svg>"##;
     let name = match group {
       Some(group) => format!("{}-{label}", group.replace('/', "-")),
@@ -580,7 +580,7 @@ mod tests {
       group: group.map(str::to_string),
       source: label.into(),
       codepoint,
-      outline: svg::parse(svg.as_bytes(), label).unwrap(),
+      outline: svg::parse(svg.as_bytes(), label, crate::config::Color::Keep).unwrap(),
     }
   }
 

@@ -71,6 +71,29 @@ pub enum OnDuplicate {
   Number,
 }
 
+/// Which of an icon's colors survive into the font.
+///
+/// A font can carry color, but only as a fixed table: a colored glyph no longer
+/// answers to the CSS `color` around it. So every icon set has to be read one
+/// way or the other, and this says which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+pub enum Color {
+  /// Keep every color the artwork names, and let only `currentColor` follow
+  /// the CSS `color`. This is what the SVG says, taken at its word: a brand
+  /// icon drawn in its brand color keeps it.
+  Keep,
+  /// Keep color only where the artwork uses more than one, and treat a lone
+  /// color as if it had been `currentColor` — a default rather than a choice.
+  /// Suits a set drawn flat in one black or gray, which is otherwise frozen at
+  /// that color and disappears against a background of it.
+  RecolorSingle,
+  /// Drop color entirely. Every icon is a plain glyph that follows the CSS
+  /// `color`, whatever the artwork said.
+  Recolor,
+}
+
 /// `icofon.toml`, every field optional so a file can set only what it cares
 /// about.
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -88,6 +111,7 @@ pub struct File {
   pub start: Option<String>,
   pub on_error: Option<OnError>,
   pub on_duplicate: Option<OnDuplicate>,
+  pub color: Option<Color>,
 }
 
 impl File {
@@ -128,6 +152,7 @@ pub struct Build {
   pub start: char,
   pub on_error: OnError,
   pub on_duplicate: OnDuplicate,
+  pub color: Color,
 }
 
 impl Build {

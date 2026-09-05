@@ -39,7 +39,7 @@ jobs:
 
       - run: cargo build --release
 
-      - run: ./target/release/icofon build examples/icons -o dist --name icons
+      - run: ./target/release/icofon build examples/icons -o dist --name icons --color recolor-single
 
       - uses: actions/upload-pages-artifact@v3
         with:

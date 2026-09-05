@@ -233,7 +233,7 @@ mod tests {
         group: None,
         source: name.into(),
         codepoint: code,
-        outline: crate::svg::parse(svg.as_bytes(), name).unwrap(),
+        outline: crate::svg::parse(svg.as_bytes(), name, crate::config::Color::Keep).unwrap(),
       });
     }
     crate::font::build(&icons, "Probe").unwrap()

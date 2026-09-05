@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use config::{Format, OnDuplicate, OnError};
+use config::{Color, Format, OnDuplicate, OnError};
 use font::Icon;
 use manifest::Manifest;
 
@@ -96,6 +96,14 @@ struct BuildArgs {
   /// What to do about two files whose names reduce to the same icon name.
   #[arg(long, value_name = "WHAT")]
   on_duplicate: Option<OnDuplicate>,
+
+  /// Which of an icon's colors survive into the font. `keep` honors every
+  /// color the artwork names and lets only `currentColor` follow the CSS
+  /// `color`; `recolor-single` additionally treats an icon drawn in one lone
+  /// color as if that color had been `currentColor`; `recolor` drops color
+  /// entirely.
+  #[arg(long, value_name = "WHICH")]
+  color: Option<Color>,
 
   /// First codepoint to assign, as hex. Defaults to the start of the Private
   /// Use Area block that icon fonts conventionally use.
@@ -219,6 +227,7 @@ fn settings(args: &BuildArgs) -> Result<config::Build> {
       .on_duplicate
       .or(file.on_duplicate)
       .unwrap_or(OnDuplicate::Fail),
+    color: args.color.or(file.color).unwrap_or(Color::Keep),
   })
 }
 
@@ -284,7 +293,13 @@ fn build(settings: &config::Build, write_mode: Write) -> Result<Report> {
     None => Manifest::default(),
   };
 
-  let icons = load_icons(&files, settings.start, &manifest, settings.on_duplicate)?;
+  let icons = load_icons(
+    &files,
+    settings.start,
+    &manifest,
+    settings.on_duplicate,
+    settings.color,
+  )?;
   let icons = triage(icons, settings.on_error == OnError::Skip)?;
 
   if write_mode == Write::Nothing {
@@ -521,6 +536,7 @@ fn load_icons(
   first: char,
   manifest: &Manifest,
   on_duplicate: OnDuplicate,
+  color: Color,
 ) -> Result<Vec<Icon>> {
   let named = resolve_names(files, manifest, on_duplicate)?;
 
@@ -572,7 +588,7 @@ fn load_icons(
       group: icon.file.group.clone(),
       source: icon.file.path.clone(),
       codepoint,
-      outline: svg::load(&icon.file.path)?,
+      outline: svg::load(&icon.file.path, color)?,
     });
   }
   Ok(icons)
@@ -964,7 +980,14 @@ mod tests {
       &["check.svg", "arrows/left.svg", "arrows/nested/up.svg"],
     );
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap();
 
     let named: Vec<_> = icons
       .iter()
@@ -987,7 +1010,14 @@ mod tests {
   fn two_folders_may_hold_the_same_file_name() {
     let dir = icon_folder("same-file", &["arrows/left.svg", "social/left.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap();
 
     let names: Vec<_> = icons.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, ["arrows-left", "social-left"]);
@@ -1005,6 +1035,7 @@ mod tests {
       '\u{e900}',
       &Manifest::default(),
       OnDuplicate::Number,
+      Color::Keep,
     )
     .unwrap();
 
@@ -1027,6 +1058,7 @@ mod tests {
       '\u{e900}',
       &Manifest::default(),
       OnDuplicate::Number,
+      Color::Keep,
     )
     .unwrap();
 
@@ -1062,6 +1094,7 @@ mod tests {
       '\u{e900}',
       &Manifest::default(),
       OnDuplicate::Number,
+      Color::Keep,
     )
     .unwrap();
 
@@ -1074,7 +1107,14 @@ mod tests {
   fn adding_an_icon_leaves_existing_codepoints_alone() {
     let dir = icon_folder("stable", &["check.svg", "zoom.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let first = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail).unwrap();
+    let first = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap();
     let before = codepoints(&first);
     assert_eq!(before["check"], '\u{e900}');
     assert_eq!(before["zoom"], '\u{e901}');
@@ -1092,7 +1132,14 @@ mod tests {
     // would take U+E900 and shift everything after it.
     std::fs::write(dir.join("aaa.svg"), SQUARE).unwrap();
     let files = collect_svgs(&dir).unwrap();
-    let second = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
+    let second = load_icons(
+      &files,
+      '\u{e900}',
+      &manifest,
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap();
     let after = codepoints(&second);
 
     assert_eq!(after["check"], '\u{e900}');
@@ -1108,7 +1155,14 @@ mod tests {
 
     let dir = icon_folder("retired", &["fresh.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &manifest,
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap();
 
     assert_eq!(icons[0].name, "fresh");
     assert_eq!(icons[0].codepoint, '\u{e901}', "U+E900 is still reserved");
@@ -1122,9 +1176,15 @@ mod tests {
     // fixed, and the build asks for it rather than guessing.
     let dir = icon_folder("clash-fails", &["map-pin.svg", "map_pin.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let error = load_icons(&files, '\u{e900}', &Manifest::default(), OnDuplicate::Fail)
-      .unwrap_err()
-      .to_string();
+    let error = load_icons(
+      &files,
+      '\u{e900}',
+      &Manifest::default(),
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap_err()
+    .to_string();
 
     assert!(error.contains("'map-pin'"), "{error}");
     assert!(error.contains("map-pin.svg"), "{error}");
@@ -1146,6 +1206,7 @@ mod tests {
       '\u{e900}',
       &Manifest::default(),
       OnDuplicate::Number,
+      Color::Keep,
     )
     .unwrap();
 
@@ -1161,7 +1222,14 @@ mod tests {
     // A space sorts before both '-' and '_', so this one is walked first.
     std::fs::write(dir.join("map pin.svg"), SQUARE).unwrap();
     let files = collect_svgs(&dir).unwrap();
-    let second = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Number).unwrap();
+    let second = load_icons(
+      &files,
+      '\u{e900}',
+      &manifest,
+      OnDuplicate::Number,
+      Color::Keep,
+    )
+    .unwrap();
 
     let named: Vec<_> = second
       .iter()
@@ -1194,7 +1262,14 @@ mod tests {
 
     let manifest = Manifest::load(&path).unwrap();
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &manifest,
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap();
     let after = codepoints(&icons);
 
     assert_eq!(after["check"], '\u{e900}');
@@ -1212,7 +1287,14 @@ mod tests {
 
     let dir = icon_folder("pin-moves", &["uE9F0-heart.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let icons = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail).unwrap();
+    let icons = load_icons(
+      &files,
+      '\u{e900}',
+      &manifest,
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap();
 
     assert_eq!(icons[0].name, "heart");
     assert_eq!(icons[0].codepoint, '\u{e9f0}');
@@ -1228,9 +1310,15 @@ mod tests {
 
     let dir = icon_folder("pin-steals", &["uE900-badge.svg", "heart.svg"]);
     let files = collect_svgs(&dir).unwrap();
-    let error = load_icons(&files, '\u{e900}', &manifest, OnDuplicate::Fail)
-      .unwrap_err()
-      .to_string();
+    let error = load_icons(
+      &files,
+      '\u{e900}',
+      &manifest,
+      OnDuplicate::Fail,
+      Color::Keep,
+    )
+    .unwrap_err()
+    .to_string();
     assert!(error.contains("pinned by a file name"), "{error}");
     std::fs::remove_dir_all(&dir).ok();
   }

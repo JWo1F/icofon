@@ -137,6 +137,12 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
 - **`fill-rule="evenodd"` is honored.** Fonts only do non-zero winding, so
   even-odd contours are re-oriented by nesting depth; holes stay holes instead
   of filling in.
+- **Overlapping shapes are unioned, not cancelled.** Everything an icon is built
+  from lands in one non-zero-filled path, where two contours that happen to turn
+  opposite ways subtract instead of adding. So every contour is re-wound before
+  it is merged — solid one way, holes the other — and shapes only ever add up.
+  Without it, an icon fattened by stroking a shape in its own fill color comes
+  out hollow, and a mark laid over a panel eats a hole through it.
 - **White and faint washes are treated as paper, not ink.** A glyph has neither
   color nor opacity, so a white shape — or a shape at low opacity used as a
   tint — cannot be drawn as itself. What it means depends on what is under it:
@@ -149,11 +155,11 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
   and design tools emit the lowercase spelling, but the underlying parser only
   matches `currentColor` and would otherwise drop the paint — turning a
   stroke-drawn icon into a blank glyph.
-- **Multi-color icons keep their colors.** An icon that uses more than one
-  color is emitted as COLR/CPAL layers, so a card logo or a brand badge renders
-  as drawn. Layers painted with `currentColor` use the palette entry reserved
-  for the text color, so they still follow CSS `color` while their neighbors
-  stay fixed. Everything else stays a plain glyph — see below.
+- **Colors are kept.** Every color the artwork names is emitted as a COLR/CPAL
+  layer, so a card logo, a brand badge or a folder of file-type icons renders as
+  drawn. Layers painted with `currentColor` use the palette entry reserved for
+  the text color, so they follow CSS `color` while their neighbors stay fixed.
+  `--color` changes this — see below.
 - **The viewBox height maps onto one em.** An icon drawn edge to edge in its
   viewBox renders exactly `1em` tall. Width is scaled to match and becomes the
   glyph's advance, so non-square icons keep their proportions.
@@ -163,20 +169,13 @@ icons at the height that lines up with running text without extra CSS.
 
 ## Color
 
-Most icons should follow the CSS `color` of whatever they sit in, and by default
-they do: an icon that uses a single color — whether that is `currentColor` or a
-hardcoded `#3F3C43` — is a plain monochrome glyph and recolors freely.
-
-Color is only used when an icon needs it, which is when it uses **two or more
-colors**. What color buys is the *relationship* between them: the white
-lettering on a dark badge, the three panels of a card logo. Flattening destroys
-that. A single flat color has no such relationship, so pinning it would take
-away recoloring and gain nothing — and an icon frozen in a mid gray disappears
-against a dark background.
+The artwork is taken at its word. A color it names is a choice and is kept; a
+shape painted `currentColor` is the way to ask for something that follows the
+CSS `color` of whatever the icon sits in.
 
 ```
-arrow-right.svg   fill="#3F3C43"          -> plain glyph, follows CSS color
 user.svg          fill="currentColor"     -> plain glyph, follows CSS color
+ruby.svg          fill="#e53935"          -> COLR: stays Ruby red
 mastercard.svg    red + orange + white    -> COLR layers, keeps its colors
 circle-check.svg  blue disc + currentColor tick
                                           -> COLR: disc stays blue, tick follows CSS color
@@ -187,6 +186,27 @@ which is what a renderer without COLR support falls back to. The preview page
 marks them "fixed color" so it is clear which ones will not follow your CSS.
 
 Gradients are reduced to their first stop, since a layer is one flat color.
+
+### `--color`
+
+Not every set means its colors, so `--color` says how literally to read them.
+
+| | |
+| --- | --- |
+| `keep` | The default, above: every named color is kept, `currentColor` recolors. |
+| `recolor-single` | Also treat an icon drawn in one lone color as if that color had been `currentColor`. |
+| `recolor` | Drop color entirely. Every icon is a plain glyph that follows CSS `color`. |
+
+`recolor-single` suits a set drawn flat in a single black or gray — the color
+there is a default rather than a choice, and an icon frozen in a mid gray
+disappears against a background of it. It only ever gives up a *lone* color: an
+icon that uses two or more still keeps them, because what several colors buy is
+the *relationship* between them (the white lettering on a dark badge, the three
+panels of a card logo), which flattening destroys.
+
+```bash
+icofon build ./icons -o dist --color recolor-single
+```
 
 ## Icons that cannot become glyphs
 
@@ -402,6 +422,7 @@ icofon build [SOURCE] [OPTIONS]
       --on-error <WHAT>  fail (default) or skip icons that cannot become a glyph
       --on-duplicate <WHAT>
                          fail (default) or number icons whose names collide
+      --color <WHICH>    keep (default), recolor-single or recolor
       --start <HEX>      First codepoint to assign (default: e900)
       --config <PATH>    Read this file instead of looking for icofon.toml
 ```

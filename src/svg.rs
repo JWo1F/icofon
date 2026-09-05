@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use kurbo::{BezPath, CubicBez, PathEl, Point, Shape};
 use usvg::tiny_skia_path::{self, PathSegment};
 
+use crate::config::Color;
 use crate::font::{ASCENDER, UNITS_PER_EM};
 
 /// How far a quadratic approximation may stray from the original cubic, in font
@@ -100,9 +101,9 @@ impl Problem {
 /// to edge in its viewBox comes out exactly one em tall. Width is preserved at
 /// the same scale and becomes the glyph's advance, so non-square icons keep
 /// their proportions.
-pub fn load(file: &Path) -> Result<Outline> {
+pub fn load(file: &Path, color: Color) -> Result<Outline> {
   let data = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
-  parse(&data, &file.display().to_string())
+  parse(&data, &file.display().to_string(), color)
 }
 
 /// A color no icon would choose, used to mark `currentColor` so it can still
@@ -192,7 +193,7 @@ fn normalize_current_color(data: &[u8]) -> Vec<u8> {
 }
 
 /// The body of [`load`], split out so it can be exercised without touching disk.
-pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
+pub(crate) fn parse(data: &[u8], source: &str, color: Color) -> Result<Outline> {
   let data = mark_current_color(normalize_current_color(data));
   let tree = usvg::Tree::from_data(&data, &usvg::Options::default())
     .with_context(|| format!("parsing {source}"))?;
@@ -216,9 +217,7 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
   for filled in &drawn {
     let mut piece = BezPath::new();
     append_scaled(&mut piece, &filled.path, scale);
-    if filled.even_odd {
-      piece = to_nonzero_winding(&piece);
-    }
+    piece = canonical_winding(&piece, filled.even_odd);
     if filled.background && has_ink {
       // Shapes are visited in paint order, so what a paper shape means is
       // decided by what is already under it.
@@ -231,7 +230,7 @@ pub(crate) fn parse(data: &[u8], source: &str) -> Result<Outline> {
   }
 
   let path = cubics_to_quads(&path);
-  let coloring = classify(&drawn);
+  let coloring = classify(&drawn, color);
   let layers = match coloring {
     Coloring::Single => Vec::new(),
     Coloring::Mixed | Coloring::Fixed => build_layers(&drawn, scale),
@@ -326,28 +325,36 @@ fn collect(group: &usvg::Group, alpha: f32, out: &mut Vec<Filled>, found: &mut F
   }
 }
 
-/// Decide how an icon is colored.
+/// Decide how an icon is colored, under the policy the build was given.
 ///
-/// Color is only worth keeping when there is more than one of it. What color
-/// buys is the *relationship* between colors, which flattening destroys: the
-/// white lettering on a dark badge, the three panels of a card logo. A single
-/// flat color has no such relationship — pinning it would only take away the
-/// ability to recolor the icon, and an icon frozen in a mid gray disappears
-/// against a dark background.
-fn classify(drawn: &[Filled]) -> Coloring {
+/// Under [`Color::Keep`] the artwork is taken at its word: a named color is a
+/// choice and is kept, and `currentColor` is the one way to ask for something
+/// that recolors. Under [`Color::RecolorSingle`] a lone color is read as a default
+/// rather than a choice and left free to change — what color buys is the
+/// *relationship* between colors (white lettering on a dark badge, the three
+/// panels of a card logo), and one flat color has no such relationship. Under
+/// [`Color::Recolor`] nothing is kept.
+fn classify(drawn: &[Filled], policy: Color) -> Coloring {
+  if policy == Color::Recolor {
+    return Coloring::Single;
+  }
   let mut seen: Vec<LayerPaint> = Vec::new();
   for filled in drawn {
     if !seen.contains(&filled.paint) {
       seen.push(filled.paint);
     }
   }
-  if seen.len() < 2 {
+  if policy == Color::RecolorSingle && seen.len() < 2 {
     return Coloring::Single;
   }
-  if seen.contains(&LayerPaint::Foreground) {
-    Coloring::Mixed
-  } else {
-    Coloring::Fixed
+  match (
+    seen.contains(&LayerPaint::Foreground),
+    seen.iter().any(|paint| *paint != LayerPaint::Foreground),
+  ) {
+    // Nothing fixed to keep: a plain glyph that follows the CSS `color`.
+    (_, false) => Coloring::Single,
+    (true, true) => Coloring::Mixed,
+    (false, true) => Coloring::Fixed,
   }
 }
 
@@ -361,10 +368,7 @@ fn build_layers(drawn: &[Filled], scale: f64) -> Vec<Layer> {
   for filled in drawn {
     let mut piece = BezPath::new();
     append_scaled(&mut piece, &filled.path, scale);
-    if filled.even_odd {
-      piece = to_nonzero_winding(&piece);
-    }
-    let piece = cubics_to_quads(&piece);
+    let piece = cubics_to_quads(&canonical_winding(&piece, filled.even_odd));
     if piece.is_empty() {
       continue;
     }
@@ -530,39 +534,74 @@ fn append_scaled(out: &mut BezPath, src: &tiny_skia_path::Path, scale: f64) {
   }
 }
 
-/// Re-orient the contours of an even-odd path so that filling it with the
-/// non-zero rule gives the same result.
+/// Re-wind one shape's contours so that solid contours all turn one way and
+/// holes the other.
 ///
-/// TrueType only knows non-zero winding, so an even-odd path whose hole happens
-/// to wind the same way as its outer contour would otherwise come out solid. A
-/// contour nested an odd number of deep is a hole and must wind against its
-/// container; one nested an even number of deep is solid and must wind with the
-/// outermost contours.
-fn to_nonzero_winding(path: &BezPath) -> BezPath {
+/// A glyph is a single non-zero-filled path, so every shape an icon is built
+/// from ends up in the same bag of contours. Non-zero filling adds windings
+/// together, which means two overlapping contours that happen to turn opposite
+/// ways *cancel*: a stroke laid over the fill it outlines eats a hole through
+/// it, and an icon drawn as `fill` plus a matching `stroke` — a common way to
+/// fatten artwork — comes out hollow. Orientation is not part of what the
+/// artwork meant, so the fix is to impose one: every contour that bounds ink
+/// turns positive, every hole turns negative. Contours then only ever add up,
+/// and dropping several shapes in one bag unions them.
+///
+/// Which contours are holes is the shape's own business, and depends on the
+/// fill rule it was drawn with:
+///
+/// * **even-odd**, where nesting alone decides: a contour nested an odd number
+///   deep is a hole.
+/// * **non-zero**, where the windings of everything around a contour decide.
+///   A contour is a hole exactly when the ink outside it cancels against it,
+///   leaving nothing inside.
+fn canonical_winding(path: &BezPath, even_odd: bool) -> BezPath {
   let contours = split_contours(path);
+  // A lone contour has nothing to nest inside, so it can only be solid.
   if contours.len() < 2 {
-    return path.clone();
+    return oriented(path, true);
   }
+
+  // `winding` walks a whole contour, so skip the ones that cannot contain the
+  // probe at all.
+  let boxes: Vec<_> = contours.iter().map(Shape::bounding_box).collect();
 
   let mut out = BezPath::new();
   for (index, contour) in contours.iter().enumerate() {
     let Some(probe) = first_point(contour) else {
       continue;
     };
-    let depth = contours
+    let around = contours
       .iter()
       .enumerate()
-      .filter(|(other_index, other)| *other_index != index && other.contains(probe))
-      .count();
+      .filter(|(other, _)| *other != index && boxes[*other].contains(probe))
+      .map(|(_, other)| other.winding(probe));
 
-    // Contours at even depth all share one orientation, odd depth the other.
-    if (depth % 2 == 0) == (contour.area() > 0.0) {
-      out.extend(contour.iter());
+    let solid = if even_odd {
+      // Contours at even depth are solid, odd depth are holes.
+      around.filter(|winding| *winding != 0).count() % 2 == 0
     } else {
-      out.extend(contour.reverse_subpaths());
-    }
+      // The ink already covering this contour, its own turn aside.
+      let outside: i32 = around.sum();
+      let own = if contour.area() > 0.0 { 1 } else { -1 };
+      // A hole is where the contour's own turn cancels what covers it. When
+      // both sides are inked the contour draws nothing either way, and
+      // counting it solid is what leaves the covered region covered.
+      outside + own != 0
+    };
+    out.extend(oriented(contour, solid).iter());
   }
   out
+}
+
+/// Turn a contour so it winds positive when it is solid, negative when it is a
+/// hole.
+fn oriented(contour: &BezPath, solid: bool) -> BezPath {
+  if (contour.area() > 0.0) == solid {
+    contour.clone()
+  } else {
+    contour.reverse_subpaths()
+  }
 }
 
 /// Split a path into one `BezPath` per contour.
@@ -632,7 +671,11 @@ mod tests {
   use kurbo::Shape;
 
   fn outline(svg: &str) -> Outline {
-    parse(svg.as_bytes(), "test.svg").unwrap()
+    outline_with(svg, Color::Keep)
+  }
+
+  fn outline_with(svg: &str, color: Color) -> Outline {
+    parse(svg.as_bytes(), "test.svg", color).unwrap()
   }
 
   #[test]
@@ -842,17 +885,88 @@ mod tests {
     assert!(o.path.contains(Point::new(500.0, 300.0)));
   }
 
+  const ONE_NAMED_COLOR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+             <path d="M2 2h20v20H2Z" fill="#3F3C43"/>
+             <path d="M6 6h12v4H6Z" fill="#3F3C43"/>
+           </svg>"##;
+
   #[test]
-  fn a_single_color_icon_stays_a_recolorable_symbol() {
-    // One flat color has no relationship for color to preserve, and
-    // pinning it would stop the icon following the CSS `color`.
+  fn a_single_named_color_is_kept() {
+    // The artwork named a color, so by default it is a choice and stays. A
+    // brand icon drawn in its brand color is the whole reason for the rule.
+    let o = outline_with(ONE_NAMED_COLOR, Color::Keep);
+    assert_eq!(o.coloring, Coloring::Fixed);
+    assert_eq!(o.layers.len(), 1);
+    assert_eq!(
+      o.layers[0].paint,
+      LayerPaint::Fixed {
+        r: 0x3F,
+        g: 0x3C,
+        b: 0x43,
+        a: 0xFF
+      }
+    );
+  }
+
+  #[test]
+  fn recolor_single_reads_a_lone_color_as_the_foreground() {
+    // Asked for, a lone color is read as a default rather than a choice, and
+    // the icon follows the CSS `color` as if it had said `currentColor`.
+    let o = outline_with(ONE_NAMED_COLOR, Color::RecolorSingle);
+    assert_eq!(o.coloring, Coloring::Single);
+    assert!(o.layers.is_empty());
+  }
+
+  #[test]
+  fn recolor_drops_color_an_icon_uses_several_of() {
+    let o = outline_with(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M2 2h20v20H2Z" fill="#FF4F00"/>
+                  <path d="M6 6h12v4H6Z" fill="#0088CC"/>
+                </svg>"##,
+      Color::Recolor,
+    );
+    assert_eq!(o.coloring, Coloring::Single);
+    assert!(o.layers.is_empty());
+  }
+
+  #[test]
+  fn a_stroke_laid_over_a_fill_does_not_eat_it() {
+    // A ring stroked over a panel of the same color — a badge with a circled
+    // mark on it, and the shape of any number of brand icons. The ring's inner
+    // contour used to wind against the panel and punch a hole clean through it.
+    let panel_and_ring = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                 <path d="M2 2v20h20V2Z" fill="#000"/>
+                 <path d="M12 6a6 6 0 1 0 0.01 0" fill="none" stroke="#000" stroke-width="4"/>
+               </svg>"##;
+    let panel_alone = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                 <path d="M2 2v20h20V2Z" fill="#000"/>
+               </svg>"##;
+
+    let with_ring = outline(panel_and_ring).path;
+    let alone = outline(panel_alone).path;
+    for x in 0..40 {
+      for y in 0..40 {
+        let at = Point::new(f64::from(x) * 25.0, f64::from(y) * 25.0 - 200.0);
+        if alone.winding(at) != 0 {
+          assert_ne!(with_ring.winding(at), 0, "the ring ate the panel at {at:?}");
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn overlapping_shapes_add_up_instead_of_cancelling() {
+    // Two squares drawn the opposite way round the same way: whatever the
+    // artwork wound them, the overlap is ink in both, so it stays ink.
     let o = outline(
       r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                  <path d="M2 2h20v20H2Z" fill="#3F3C43"/>
-                  <path d="M6 6h12v4H6Z" fill="#3F3C43"/>
+                  <path d="M2 2h12v12H2Z" fill="#000"/>
+                  <path d="M10 10V22h12V10Z" fill="#000"/>
                 </svg>"##,
     );
-    assert!(o.layers.is_empty());
+    // A point in the overlap of the two squares.
+    assert_ne!(o.path.winding(Point::new(500.0, 300.0)), 0);
   }
 
   #[test]
