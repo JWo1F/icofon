@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <symbol id="chip" viewBox="0 0 10 10">
+    <rect x="0.5" y="0.5" width="9" height="9" rx="2" fill="currentColor"/>
+  </symbol>
+  <use href="#chip" x="1" y="1" width="10" height="10"/>
+  <use href="#chip" x="13" y="1" width="10" height="10"/>
+  <use href="#chip" x="1" y="13" width="10" height="10"/>
+  <use href="#chip" x="13" y="13" width="10" height="10"/>
+</svg>

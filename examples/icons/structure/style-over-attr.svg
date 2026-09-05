@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- the style property wins over the presentation attribute beside it -->
+  <circle cx="12" cy="12" r="9" fill="#EF4444" style="fill:#16A34A"/>
+  <rect x="10" y="4" width="4" height="16" fill="#000000" style="fill:#FFFFFF"/>
+</svg>

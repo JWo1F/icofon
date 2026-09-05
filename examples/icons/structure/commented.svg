@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Exported by hand. Comments and a prolog before the root element. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- cup -->
+  <path d="M4 8h13v7a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4Z" fill="currentColor"/>
+  <!-- handle -->
+  <path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17" fill="none" stroke="currentColor" stroke-width="2"/>
+  <!-- steam -->
+  <path d="M8 2v3M12 2v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+</svg>
