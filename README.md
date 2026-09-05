@@ -322,6 +322,17 @@ The title scrolls away; the toolbar under it sticks to the top and carries:
 
 The three filters combine, so "fixed-color icons in `payment`" is two clicks.
 
+Each of them is drawn only where it does something. A set with nothing painted
+`currentColor` gets no palette, because nothing on the page would move; a set
+that is all one color bucket gets no chips, because a chip that matches every
+icon is not a filter — the page says which bucket it is once, beside the glyph
+count, and the cards drop the note they would all have carried. One subfolder
+holding every icon gets no folder picker: both entries are the same list.
+
+The page carries its own favicon as a `data:` URI and signs off with a byline
+at the foot, so a preview is still one file plus its font — nothing beside it
+to copy, and nothing to go missing when it is moved.
+
 The toolbar keeps one height whether stuck or not. A sticky bar that resizes
 shifts the content below it, the browser's scroll anchoring then compensates by
 moving the scroll position, and the two fight each other on slow scrolls.
