@@ -206,6 +206,12 @@ pub(crate) fn parse(data: &[u8], source: &str, color: Color) -> Result<Outline> 
   let mut drawn = Vec::new();
   let mut found = Findings::default();
   collect(tree.root(), 1.0, &mut drawn, &mut found);
+  // A shape with no inside paints nothing, and one arrives whenever a line is
+  // drawn with only a `stroke`: SVG fills a path black unless told otherwise,
+  // so the line turns up carrying a black fill as well. Left in, it costs the
+  // icon a color it never showed — enough to stop a one-color icon following
+  // the CSS `color`, and to bring its faint layers up to full strength.
+  drawn.retain(|filled| encloses_area(&filled.path));
 
   // Paper only means anything next to ink. An icon drawn entirely in white,
   // or entirely as a faint wash, is simply a light icon and must still be
@@ -475,6 +481,63 @@ fn is_background(paint: &usvg::Paint, alpha: f32) -> bool {
   }
 }
 
+/// Whether a shape has an inside for a fill to land in.
+///
+/// Measured on the control polygon rather than the curves, which is zero in
+/// exactly the same cases: a curve whose control points are in a line is a line.
+/// Subpaths are measured one at a time and their areas added as magnitudes, so
+/// that two shapes which happen to cancel are not mistaken for one that draws
+/// nothing.
+fn encloses_area(path: &tiny_skia_path::Path) -> bool {
+  // A millionth of a square unit of the source artwork, which no rasterizer
+  // could show and no color could be read from.
+  const NOTHING: f64 = 1e-6;
+
+  fn cross(from: (f64, f64), to: (f64, f64)) -> f64 {
+    from.0 * to.1 - to.0 * from.1
+  }
+  fn at(p: tiny_skia_path::Point) -> (f64, f64) {
+    (f64::from(p.x), f64::from(p.y))
+  }
+
+  let mut total = 0.0f64;
+  let mut subpath = 0.0f64;
+  let mut start = (0.0, 0.0);
+  let mut current = start;
+  let step = |subpath: &mut f64, current: &mut (f64, f64), to: (f64, f64)| {
+    *subpath += cross(*current, to);
+    *current = to;
+  };
+
+  for segment in path.segments() {
+    match segment {
+      PathSegment::MoveTo(p) => {
+        // Whatever the subpath left open, close before starting the next.
+        total += (subpath + cross(current, start)).abs();
+        subpath = 0.0;
+        start = at(p);
+        current = start;
+      }
+      PathSegment::LineTo(p) => step(&mut subpath, &mut current, at(p)),
+      PathSegment::QuadTo(c, p) => {
+        step(&mut subpath, &mut current, at(c));
+        step(&mut subpath, &mut current, at(p));
+      }
+      PathSegment::CubicTo(c1, c2, p) => {
+        step(&mut subpath, &mut current, at(c1));
+        step(&mut subpath, &mut current, at(c2));
+        step(&mut subpath, &mut current, at(p));
+      }
+      PathSegment::Close => {
+        step(&mut subpath, &mut current, start);
+      }
+    }
+  }
+  total += (subpath + cross(current, start)).abs();
+
+  total / 2.0 > NOTHING
+}
+
 fn stroke_outline(
   path: &tiny_skia_path::Path,
   stroke: &usvg::Stroke,
@@ -493,9 +556,21 @@ fn stroke_outline(
       usvg::LineJoin::Round => tiny_skia_path::LineJoin::Round,
       usvg::LineJoin::Bevel => tiny_skia_path::LineJoin::Bevel,
     },
+    // Dashing is not something the stroker does; it is done below, to the path
+    // rather than to its outline.
     dash: None,
   };
-  path.stroke(&props, 1.0)
+
+  // A dashed stroke is a row of separate marks, and drawing it solid is not a
+  // near miss — a dotted rule comes out as a bar. Cutting the path into its
+  // dashes first gives the stroker one open subpath per mark, so each comes out
+  // as a contour of its own, caps and all.
+  let dashed = stroke
+    .dasharray()
+    .and_then(|pattern| tiny_skia_path::StrokeDash::new(pattern.to_vec(), stroke.dashoffset()))
+    .and_then(|dash| path.dash(&dash, 1.0));
+
+  dashed.as_ref().unwrap_or(path).stroke(&props, 1.0)
 }
 
 /// Copy an SVG path into `out`, scaling it and flipping the y axis on the way.
@@ -996,6 +1071,50 @@ mod tests {
         }
       }
     }
+  }
+
+  #[test]
+  fn a_line_given_svgs_default_fill_is_not_a_second_color() {
+    // A path with only a `stroke` still arrives carrying SVG's default black
+    // fill. A line has no inside, so it paints nothing — but counted as a color
+    // it costs the icon the CSS `color`, and brings its faint layers up to full
+    // strength. This is the duotone battery: a wash, an outline, and a terminal
+    // drawn as a bare line.
+    let o = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <rect x="2" y="7" width="17" height="10" fill="currentColor" opacity="0.18"/>
+                  <rect x="2" y="7" width="17" height="10" fill="none"
+                        stroke="currentColor" stroke-width="1.8"/>
+                  <path d="M21 10.5v3" stroke="currentColor" stroke-width="2.6"/>
+                </svg>"##,
+    );
+    assert_eq!(o.coloring, Coloring::Single, "one color, and CSS sets it");
+    assert!(o.layers.is_empty());
+    // The wash is dropped rather than painted, so the outline still encloses a
+    // hole instead of a solid block.
+    assert_eq!(o.path.winding(Point::new(430.0, 300.0)), 0);
+  }
+
+  #[test]
+  fn a_dashed_stroke_is_cut_into_its_dashes() {
+    let dashed = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M2 12h20" fill="none" stroke="#000" stroke-width="2"
+                        stroke-dasharray="4 4"/>
+                </svg>"##,
+    );
+    let solid = outline(
+      r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M2 12h20" fill="none" stroke="#000" stroke-width="2"/>
+                </svg>"##,
+    );
+    // One contour per dash, against the solid rule's single one.
+    assert!(
+      dashed.path.segments().count() > solid.path.segments().count(),
+      "a dashed rule should be several marks, not one"
+    );
+    // And it covers less ground, because the gaps are gaps.
+    assert!(dashed.path.area().abs() < solid.path.area().abs() * 0.75);
   }
 
   #[test]

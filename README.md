@@ -133,6 +133,12 @@ styles follow it, so `--prefix ico --base-class` gives `class="ico ico-arrow-lef
   `<polygon>` and friends are all flattened into one outline.
 - **Strokes are converted to outlines**, so stroke-drawn icon sets (Feather,
   Lucide, Tabler) come through as solid shapes. A font can only fill.
+  `stroke-dasharray` is cut before the outline is taken, so a dotted rule stays
+  a row of dots rather than becoming a bar.
+- **A shape with no inside is dropped.** SVG fills a path black unless told
+  otherwise, so a line drawn with only a `stroke` arrives carrying a black fill
+  as well. It paints nothing — a line has no inside — but counted as a color it
+  would cost a one-color icon the CSS `color`.
 - **Cubic curves become quadratics**, which is all TrueType can store.
 - **`fill-rule="evenodd"` is honored.** Fonts only do non-zero winding, so
   even-odd contours are re-oriented by nesting depth; holes stay holes instead
