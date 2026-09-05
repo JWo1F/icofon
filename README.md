@@ -314,7 +314,8 @@ codepoint — the old one is retired, not reused.
 `index.html` lists every icon in a grid, grouped by subfolder, each card
 showing the glyph, its name, its CSS class and its codepoint. Search filters on
 all of those — type a name, a class, a hex code or a folder — and groups that
-lose all their icons collapse with them. Clicking a class name copies it.
+lose all their icons collapse with them. Clicking a class name copies it;
+clicking anywhere else on a card opens the icon.
 
 The title scrolls away; the toolbar under it sticks to the top and carries:
 
@@ -338,6 +339,27 @@ that is all one color bucket gets no chips, because a chip that matches every
 icon is not a filter — the page says which bucket it is once, beside the glyph
 count, and the cards drop the note they would all have carried. One subfolder
 holding every icon gets no folder picker: both entries are the same list.
+
+### Opening one icon
+
+Clicking a card opens that icon on its own. The glyph fills a square stage the
+full height of the dialog, drawn inside its em box with its baseline marked, so
+where it sits in a line of text is visible rather than guessed at, and a wide
+icon shows how far past the square it runs. Beside it are the folder, the name,
+the codepoint and what CSS `color` can do to it, then three rows that each copy
+one thing: the class attribute, a `<span>` that uses it, and the `content` a
+`::before` rule needs.
+
+Under those are the icons whose names are most like this one's, which is how a
+set is browsed rather than searched — open `arrow-left` and `arrow-right` is one
+click away. Names are matched a word at a time on the file part of the name,
+with a longer spelling of a word — `arrow` against `arrows` — still counting;
+sharing the first word, or the folder, counts for a little more. The list
+ignores the filters, since a search narrow enough to open an icon from has
+usually hidden everything that icon is like.
+
+The arrow keys walk the set without closing the dialog, `Esc` closes it, and so
+does a click outside it.
 
 The page carries its own favicon as a `data:` URI and signs off with a byline
 at the foot, so a preview is still one file plus its font — nothing beside it

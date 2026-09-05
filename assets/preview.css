@@ -1,5 +1,11 @@
-  :root { --bar: #ffffff; --hair: rgba(9,9,11,.10); }
-  [data-theme="dark"] { --bar: #09090b; --hair: rgba(250,250,250,.14); }
+  :root {
+    --bar: #ffffff; --hair: rgba(9,9,11,.10);
+    --grid: rgba(9,9,11,.05); --rule: rgba(9,9,11,.22); --faint: rgba(9,9,11,.4);
+  }
+  [data-theme="dark"] {
+    --bar: #09090b; --hair: rgba(250,250,250,.14);
+    --grid: rgba(250,250,250,.06); --rule: rgba(250,250,250,.28); --faint: rgba(250,250,250,.42);
+  }
 
   /* An icon is one em tall but may be many ems wide, so each card is measured
      and the glyph is scaled down by its own width to fit. Square icons are
@@ -56,3 +62,188 @@
   .picker-ring:hover { transform: scale(1.12); }
   .swatch { transition: transform .15s ease; }
   .swatch:hover { transform: scale(1.15); }
+
+  /* A card is a way into the icon, so the whole of it answers a click and
+     says so on hover. The copy button inside keeps its own cursor. */
+  .card { cursor: pointer; transition: border-color .15s ease; }
+  .card:hover { border-color: color-mix(in srgb, currentColor 28%, transparent); }
+  .card .open { display: block; width: 100%; background: none; border: none; padding: 0; }
+  .card .open:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; border-radius: .5rem; }
+
+  /* ---------------------------------------------------------------------
+     The detail dialog.
+
+     One icon, shown the way the font sees it: inside its own em box, sitting
+     on its own baseline. Everything a card has to abbreviate is spelled out
+     beside it. */
+
+  /* The page must not scroll behind the dialog: the backdrop covers it, so a
+     scroll there moves something the reader cannot see. */
+  html:has(dialog.detail[open]) { overflow: hidden; }
+
+  dialog.detail {
+    padding: 0; margin: auto; border: none; background: transparent; color: inherit;
+    width: min(62rem, 94vw); height: min(33rem, 88vh);
+    max-width: none; max-height: none; overflow: visible;
+  }
+  dialog.detail::backdrop {
+    background: rgba(9, 9, 11, .5);
+    backdrop-filter: blur(6px);
+    animation: detail-fade .2s ease;
+  }
+  [data-theme="dark"] dialog.detail::backdrop { background: rgba(0, 0, 0, .68); }
+
+  .detail-shell {
+    outline: none;
+    display: flex; height: 100%; overflow: hidden;
+    border-radius: 1rem;
+    border: 1px solid var(--hair);
+    background: var(--bar);
+    box-shadow: 0 32px 70px -20px rgba(9, 9, 11, .45);
+    animation: detail-rise .22s cubic-bezier(.2, .8, .3, 1);
+  }
+  dialog.detail[data-closing] { animation: detail-out .16s ease forwards; }
+
+  @keyframes detail-fade { from { opacity: 0 } }
+  @keyframes detail-rise { from { opacity: 0; transform: translateY(10px) scale(.985) } }
+  @keyframes detail-out { to { opacity: 0; transform: translateY(6px) scale(.99) } }
+
+  /* The stage is square and as tall as the dialog, so the icon gets the whole
+     height whatever the sidebar does. Sized in container units, which is what
+     lets the glyph fill it without measuring anything in script. */
+  .stage {
+    position: relative; flex: 0 0 auto; height: 100%; aspect-ratio: 1;
+    display: grid; place-items: center;
+    container-type: size;
+    border-right: 1px solid var(--hair);
+    background-image:
+      linear-gradient(to right, var(--grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+    background-size: 12.5% 12.5%;
+  }
+
+  /* The em box is not drawn around the glyph -- it *is* the glyph's own box.
+     The font spans exactly one em from ascender to descender, so at a line
+     height of 1 the span measures one em tall and one advance wide, and the
+     dashed edge lands on the real metrics. */
+  .em-box { position: relative; }
+  .stage-glyph {
+    display: block; line-height: 1;
+    font-size: min(52cqh, calc(62cqw / var(--aspect, 1)));
+    color: var(--icon-color, inherit);
+    outline: 1px dashed var(--rule);
+  }
+  /* The baseline: the descender is 200 of the em's 1000 units, so it sits a
+     fifth of the way up from the bottom of the box. It is drawn as two ticks
+     reaching in from outside rather than as one rule, which would otherwise
+     be a line struck through the artwork. */
+  .em-box::before {
+    content: ""; position: absolute; left: -12%; right: -12%; bottom: 20%; height: 1px;
+    background: linear-gradient(90deg,
+      var(--rule) 0 9%, transparent 9% 91%, var(--rule) 91% 100%);
+  }
+  .em-box::after {
+    content: "baseline"; position: absolute; right: 100%; bottom: calc(20% + .3rem);
+    margin-right: .6rem; white-space: nowrap;
+    font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .stage-caption {
+    position: absolute; bottom: .875rem; left: 1rem;
+    font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--faint);
+  }
+
+  .side {
+    flex: 1 1 auto; min-width: 0;
+    display: flex; flex-direction: column;
+    padding: 1.5rem 1.5rem .25rem;
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+
+  /* One copyable fact per row: what it reads is what lands on the clipboard,
+     bar the leading dot on a selector, which a class attribute does not take. */
+  .row {
+    display: flex; align-items: center; gap: .75rem; width: 100%;
+    padding: .5rem .75rem; border-radius: .625rem; cursor: pointer;
+    border: 1px solid var(--hair); background: none; color: inherit;
+    text-align: left;
+    transition: border-color .15s ease, background-color .15s ease;
+  }
+  .row:hover { border-color: color-mix(in srgb, currentColor 30%, transparent); }
+  .row-label {
+    flex: 0 0 3.75rem;
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .row-value {
+    flex: 1 1 auto; min-width: 0;
+    font-family: var(--font-mono); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .row-hint {
+    flex: 0 0 auto; opacity: 0;
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--faint);
+    transition: opacity .15s ease;
+  }
+  .row:hover .row-hint, .row:focus-visible .row-hint { opacity: 1; }
+
+  .related-grid {
+    display: grid; gap: .25rem;
+    grid-template-columns: repeat(auto-fill, minmax(4.25rem, 1fr));
+  }
+  .related {
+    container-type: inline-size;
+    display: flex; flex-direction: column; align-items: center; gap: .375rem;
+    padding: .625rem .25rem .5rem; border-radius: .625rem; cursor: pointer;
+    border: 1px solid transparent; background: none; color: inherit;
+    animation: related-in .28s ease backwards;
+    animation-delay: calc(var(--i, 0) * 25ms);
+    transition: border-color .15s ease;
+  }
+  .related:hover { border-color: var(--hair); }
+  .related .glyph { font-size: min(1.5rem, calc((100cqw - .5rem) / var(--aspect, 1))); }
+  .related-name {
+    max-width: 100%; font-size: 10px; color: var(--faint);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  @keyframes related-in { from { opacity: 0; transform: translateY(6px) } }
+
+  /* Always reachable, however long the similar list runs. */
+  .side-foot {
+    position: sticky; bottom: 0; margin-top: auto;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .625rem 0 .875rem; background: var(--bar);
+    border-top: 1px solid var(--hair);
+  }
+  .step {
+    width: 1.75rem; height: 1.75rem; border-radius: 9999px; cursor: pointer;
+    border: 1px solid var(--hair); background: none; color: inherit;
+    display: grid; place-items: center; line-height: 1;
+    transition: border-color .15s ease;
+  }
+  .step:hover { border-color: color-mix(in srgb, currentColor 40%, transparent); }
+
+  /* One focus ring for everything in the dialog, in the page's own accent
+     rather than the browser's. */
+  .row:focus-visible, .step:focus-visible, .related:focus-visible,
+  #detail-close:focus-visible {
+    outline: 2px solid #2563eb; outline-offset: 2px;
+  }
+
+  /* Narrow screens have no room for a square stage beside a sidebar, so the
+     two stack and the stage keeps its square on the full width. */
+  @media (max-width: 44rem) {
+    dialog.detail { width: 94vw; height: 88vh; }
+    .detail-shell { flex-direction: column; }
+    .stage {
+      width: 100%; height: auto; max-height: 45%; aspect-ratio: 1;
+      border-right: none; border-bottom: 1px solid var(--hair);
+    }
+    .side { padding: 1.125rem 1.125rem .25rem; }
+    .em-box::after { display: none; }
+  }
+
+  /* The toast has to clear the dialog, and only the top layer does. A popover
+     enters it after the dialog did, which puts it in front. */
+  #toast { top: auto; right: auto; margin: 0; border: none; }

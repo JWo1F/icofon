@@ -156,7 +156,8 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
     {logo}  </a>
 </footer>
 
-<div id="toast" role="status" aria-live="polite"
+{detail}
+<div id="toast" popover="manual" role="status" aria-live="polite"
      class="pointer-events-none fixed bottom-7 left-1/2 -translate-x-1/2 translate-y-3 rounded-lg
             bg-zinc-900 px-3.5 py-2 text-sm text-white opacity-0 transition
             dark:bg-zinc-100 dark:text-zinc-900"></div>
@@ -171,6 +172,7 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
     script = SCRIPT,
     home = HOMEPAGE,
     logo = LOGO_SVG,
+    detail = DETAIL,
   ));
 
   page
@@ -431,12 +433,15 @@ fn card(icon: &Icon, classes: Classes<'_>, mark_color: bool) -> String {
   };
 
   format!(
-    r#"    <figure data-search="{search}" data-kind="{kind}" data-group="{group}" style="--aspect:{aspect:.3}"
+    r#"    <figure data-search="{search}" data-kind="{kind}" data-group="{group}" data-name="{full}"
+            data-code="{code:04x}" style="--aspect:{aspect:.3}"
             class="card m-0 flex flex-col items-center gap-3 rounded-xl border border-zinc-200
                    px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
-      <span class="glyph {class} leading-none" aria-hidden="true"></span>
+      <button type="button" class="open cursor-pointer" aria-label="Open {name}">
+        <span class="glyph {class} leading-none" aria-hidden="true"></span>
+      </button>
       <figcaption class="flex w-full flex-col items-center gap-1">
-        <span class="max-w-full text-[13px] font-medium break-all">{name}</span>{width_note}{color_note}
+        <span class="card-name max-w-full text-[13px] font-medium break-all">{name}</span>{width_note}{color_note}
         <button type="button" data-copy="{class}" title="Copy class name"
                 class="name max-w-full cursor-pointer rounded-md px-1.5 py-0.5 font-mono text-[12px]
                        break-all text-zinc-500 hover:bg-blue-600/10 hover:text-blue-700
@@ -468,6 +473,9 @@ fn card(icon: &Icon, classes: Classes<'_>, mark_color: bool) -> String {
     class = escape(&class),
     selector = escape(&selector),
     name = escape(&icon.label),
+    // The whole name, group and all: the dialog matches icons on their words,
+    // and the card's own title is only the leaf.
+    full = escape(&icon.name),
     code = code,
     aspect = aspect,
     width_note = width_note,
@@ -484,6 +492,66 @@ const SWATCHES: [&str; 9] = [
   "#000000", "#ffffff", "#71717a", "#2563eb", "#0d9488", "#16a34a", "#ca8a04", "#dc2626", "#9333ea",
 ];
 
+/// The detail dialog: one icon, large, with everything the card had to
+/// abbreviate spelled out beside it.
+///
+/// The markup is static and empty -- a set of a thousand icons would otherwise
+/// carry a thousand copies of it -- and the script fills it in from the card
+/// that was clicked. Nothing here is generated, so it is a constant.
+const DETAIL: &str = r##"<dialog id="detail" class="detail" aria-labelledby="detail-name">
+  <div class="detail-shell" tabindex="-1" autofocus>
+
+    <div class="stage">
+      <div class="em-box">
+        <span id="detail-glyph" class="stage-glyph" aria-hidden="true"></span>
+      </div>
+      <span id="detail-advance" class="stage-caption font-mono"></span>
+    </div>
+
+    <aside class="side">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p id="detail-folder" class="font-mono text-[10px] tracking-[0.22em] text-zinc-400 uppercase dark:text-zinc-500"></p>
+          <h2 id="detail-name" class="font-display text-[clamp(1.35rem,3vw,1.85rem)] leading-[1.05] tracking-tight break-all"></h2>
+          <p id="detail-meta" class="mt-1.5 font-mono text-[11px] text-zinc-400 dark:text-zinc-500"></p>
+        </div>
+        <button type="button" id="detail-close" aria-label="Close" title="Close (Esc)"
+                class="-mt-1 -mr-1 size-8 shrink-0 cursor-pointer rounded-full text-[13px] leading-none
+                       text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900
+                       dark:hover:bg-zinc-900 dark:hover:text-zinc-100">&#x2715;</button>
+      </div>
+
+      <div class="mt-5 flex flex-col gap-1.5">
+        <button type="button" id="copy-class" class="row" data-copy="">
+          <span class="row-label">Class</span><code class="row-value"></code><span class="row-hint">Copy</span>
+        </button>
+        <button type="button" id="copy-html" class="row" data-copy="">
+          <span class="row-label">HTML</span><code class="row-value"></code><span class="row-hint">Copy</span>
+        </button>
+        <button type="button" id="copy-css" class="row" data-copy="">
+          <span class="row-label">CSS</span><code class="row-value"></code><span class="row-hint">Copy</span>
+        </button>
+      </div>
+
+      <div class="mt-6">
+        <p class="font-mono text-[10px] tracking-[0.22em] text-zinc-400 uppercase dark:text-zinc-500">Similar names</p>
+        <div id="detail-related" class="related-grid mt-2"></div>
+        <p id="detail-lonely" hidden class="mt-2 text-[12px] text-zinc-400 dark:text-zinc-500">
+          No other icon shares a word with this name.
+        </p>
+      </div>
+
+      <div class="side-foot">
+        <button type="button" id="detail-prev" class="step" aria-label="Previous icon" title="Previous (&#x2190;)">&#x2039;</button>
+        <span id="detail-count" class="font-mono text-[10px] tracking-[0.18em] text-zinc-400 uppercase dark:text-zinc-500"></span>
+        <button type="button" id="detail-next" class="step" aria-label="Next icon" title="Next (&#x2192;)">&#x203a;</button>
+      </div>
+    </aside>
+
+  </div>
+</dialog>
+"##;
+
 const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.card'));
   const groups = Array.from(document.querySelectorAll('.icon-group'));
   const search = document.getElementById('search');
@@ -491,10 +559,13 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   const empty = document.getElementById('empty');
   const toast = document.getElementById('toast');
 
-  // The picker sets a custom property on <main> that only .glyph reads, so the
-  // icons follow it while the card text stays readable. Icons drawn with
-  // currentColor pick it up; COLR icons keep the colors baked into the font.
-  const grid = document.querySelector('main');
+  // The picker sets a custom property on the document that only glyphs read,
+  // so the icons follow it while the surrounding text stays readable. It is
+  // set on the root rather than on the grid because the detail dialog sits
+  // outside the grid and its glyphs have to follow the picker as well. Icons
+  // drawn with currentColor pick it up; COLR icons keep the colors baked into
+  // the font.
+  const grid = document.documentElement;
   const swatches = Array.from(document.querySelectorAll('.swatch'));
   const picker = document.getElementById('picker');
   const colorNote = document.getElementById('color-note');
@@ -605,8 +676,22 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   }
   paintChips();
 
-  // A slash jumps to the search box; escape clears whatever is in it.
+  // A slash jumps to the search box; escape clears whatever is in it. With
+  // the dialog open the arrows walk the set instead, and the search box is
+  // not on the page to jump to.
   document.addEventListener('keydown', (event) => {
+    if (detail.open) {
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        step(event.key === 'ArrowRight' ? 1 : -1);
+      } else if (event.key === 'Escape') {
+        // Taken here rather than left to the dialog's own escape handling,
+        // which would snap it shut without the closing animation.
+        event.preventDefault();
+        dismiss();
+      }
+      return;
+    }
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
     if (event.key === '/' && !typing) {
       event.preventDefault();
@@ -627,9 +712,204 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
     { threshold: 1 }
   ).observe(sentinel);
 
-  let timer;
+  // ---------------------------------------------------------------------
+  // The detail dialog.
+  //
+  // A card can only abbreviate: the glyph is small, the class is elided and
+  // nothing says what else in the set is like it. Clicking one opens the icon
+  // at size, on its own metrics, with the rest spelled out.
+
+  const detail = document.getElementById('detail');
+  const detailGlyph = document.getElementById('detail-glyph');
+  const detailName = document.getElementById('detail-name');
+  const detailFolder = document.getElementById('detail-folder');
+  const detailMeta = document.getElementById('detail-meta');
+  const detailAdvance = document.getElementById('detail-advance');
+  const detailRelated = document.getElementById('detail-related');
+  const detailLonely = document.getElementById('detail-lonely');
+  const detailCount = document.getElementById('detail-count');
+  const copyClass = document.getElementById('copy-class');
+  const copyHtml = document.getElementById('copy-html');
+  const copyCss = document.getElementById('copy-css');
+
+  // What the color buckets are called in a sentence. On a card the label is
+  // dropped when every icon shares it, since it would then draw no
+  // distinction; here one icon is being read on its own, so it always earns
+  // its place.
+  const KINDS = { single: 'recolorable', mixed: 'partly fixed color', fixed: 'fixed color' };
+
+  // Everything the dialog shows about an icon, taken from the card itself so
+  // the page carries one copy of it rather than two.
+  function read(card) {
+    const name = card.querySelector('.name');
+    return {
+      card,
+      full: card.dataset.name,
+      label: card.querySelector('.card-name').textContent,
+      group: card.dataset.group,
+      code: card.dataset.code,
+      attr: name.dataset.copy,
+      selector: name.textContent,
+      aspect: Number(card.style.getPropertyValue('--aspect')) || 1,
+      kind: KINDS[card.dataset.kind] || '',
+    };
+  }
+
+  // Names are matched on the leaf, not on the full name: the folder is
+  // already in every name under it, so matching on the whole would make every
+  // icon in a folder look like every other one and drown the real kinship.
+  // The folder still counts, as a nudge further down.
+  const words = (name) => name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const spelling = new Map(
+    cards.map((card) => [card, words(card.querySelector('.card-name').textContent)]));
+
+  // How much two names have in common. A whole word shared counts most; a
+  // longer spelling of the same word -- "arrow" against "arrows" -- still
+  // counts, because those name one family and someone looking at the one
+  // wants the other.
+  function affinity(mine, theirs) {
+    let score = 0;
+    for (const word of mine) {
+      for (const other of theirs) {
+        if (word === other) { score += 3; break; }
+        const long = word.length > 3 && other.length > 3;
+        if (long && (word.startsWith(other) || other.startsWith(word))) { score += 2; break; }
+      }
+    }
+    return score;
+  }
+
+  // The icons closest to this one by name. Filters are deliberately ignored:
+  // a search narrow enough to be worth opening an icon from is usually narrow
+  // enough to have hidden everything it is like.
+  function similar(icon) {
+    const mine = spelling.get(icon.card);
+    const matches = [];
+    for (const card of cards) {
+      if (card === icon.card) continue;
+      const theirs = spelling.get(card);
+      let score = affinity(mine, theirs);
+      if (!score) continue;
+      // A shared first word is what makes a family -- arrow-left beside
+      // arrow-right -- so it outranks the same word turning up anywhere.
+      if (theirs[0] === mine[0]) score += 2;
+      if (card.dataset.group === icon.group) score += 1;
+      matches.push({ card, score });
+    }
+    matches.sort((a, b) =>
+      b.score - a.score || a.card.dataset.name.localeCompare(b.card.dataset.name));
+    return matches.slice(0, 12).map((match) => match.card);
+  }
+
+  // Which list the arrows walk. With a filter on they follow what is left on
+  // the page; an icon reached through the similar list can be one the filter
+  // hides, and then the whole set is what there is to walk.
+  function neighbours() {
+    const visible = cards.filter((card) => !card.hidden);
+    return visible.includes(current) ? visible : cards;
+  }
+
+  let current = null;
+
+  function show(card) {
+    current = card;
+    const icon = read(card);
+
+    detailGlyph.className = 'stage-glyph ' + icon.attr;
+    detailGlyph.style.setProperty('--aspect', icon.aspect);
+    detailName.textContent = icon.label;
+    detailFolder.textContent = icon.group;
+    detailFolder.hidden = !icon.group;
+    detailMeta.textContent =
+      ['U+' + icon.code.toUpperCase(), icon.kind].filter(Boolean).join(' · ');
+    detailAdvance.textContent = icon.aspect.toFixed(2) + ' em advance';
+
+    // The selector is what a stylesheet matches on and the attribute is what
+    // a class attribute takes, so each row shows the one and copies the other.
+    copyClass.querySelector('.row-value').textContent = icon.selector;
+    copyClass.dataset.copy = icon.attr;
+    const markup = '<span class="' + icon.attr + '"></span>';
+    copyHtml.querySelector('.row-value').textContent = markup;
+    copyHtml.dataset.copy = markup;
+    const content = 'content: "\\' + icon.code + '";';
+    copyCss.querySelector('.row-value').textContent = content;
+    copyCss.dataset.copy = content;
+
+    const matches = similar(icon);
+    detailLonely.hidden = matches.length > 0;
+    detailRelated.replaceChildren(...matches.map((match, index) => {
+      const near = read(match);
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'related';
+      tile.title = near.full;
+      tile.style.setProperty('--aspect', near.aspect);
+      tile.style.setProperty('--i', index);
+      const glyph = document.createElement('span');
+      glyph.className = 'glyph ' + near.attr;
+      glyph.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.className = 'related-name';
+      label.textContent = near.label;
+      tile.append(glyph, label);
+      tile.addEventListener('click', () => show(match));
+      return tile;
+    }));
+
+    const list = neighbours();
+    detailCount.textContent = (list.indexOf(current) + 1) + ' / ' + list.length;
+    // A tall similar list left scrolled down would hide the icon that was
+    // just asked for.
+    detail.querySelector('.side').scrollTop = 0;
+  }
+
+  function step(delta) {
+    const list = neighbours();
+    const at = list.indexOf(current);
+    show(list[(at + delta + list.length) % list.length]);
+  }
+
+  // Closing is animated, so the dialog is left open until the animation ends.
+  // Only the dialog itself carries that animation, which is what the target
+  // check is reading.
+  function dismiss() {
+    if (detail.open) detail.dataset.closing = '';
+  }
+  detail.addEventListener('animationend', (event) => {
+    if (event.target === detail && 'closing' in detail.dataset) {
+      delete detail.dataset.closing;
+      detail.close();
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    // Copying the class is not also a request to open the icon, so a click
+    // that lands on a copy button stops there.
+    if (event.target.closest('[data-copy]')) return;
+    const card = event.target.closest('.card');
+    if (!card || detail.open) return;
+    show(card);
+    detail.showModal();
+  });
+
+  document.getElementById('detail-close').addEventListener('click', dismiss);
+  document.getElementById('detail-prev').addEventListener('click', () => step(-1));
+  document.getElementById('detail-next').addEventListener('click', () => step(1));
+  // The dialog is exactly its own box, so a click that lands on the element
+  // itself came from the backdrop around it.
+  detail.addEventListener('click', (event) => {
+    if (event.target === detail) dismiss();
+  });
+  // Escape closes it the same way the button does, rather than snapping shut.
+  detail.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    dismiss();
+  });
+
+  let fading;
+  let hiding;
   document.addEventListener('click', async (event) => {
-    const button = event.target.closest('.name');
+    const button = event.target.closest('[data-copy]');
     if (!button) return;
     const text = button.dataset.copy;
     try {
@@ -647,9 +927,16 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
       field.remove();
     }
     toast.textContent = 'Copied ' + text;
+    // A modal dialog is in the top layer, where an ordinary fixed element
+    // cannot reach however it is stacked. A popover enters the same layer,
+    // and later than the dialog did, so the toast lands in front of it.
+    if (!toast.matches(':popover-open')) toast.showPopover();
     toast.classList.remove('opacity-0', 'translate-y-3');
-    clearTimeout(timer);
-    timer = setTimeout(() => toast.classList.add('opacity-0', 'translate-y-3'), 1400);
+    clearTimeout(fading);
+    clearTimeout(hiding);
+    fading = setTimeout(() => toast.classList.add('opacity-0', 'translate-y-3'), 1400);
+    // Left in the layer until the fade is over, so it is not cut off mid-way.
+    hiding = setTimeout(() => toast.hidePopover(), 1700);
   });"#;
 
 /// Standard base64, which is how an SVG is spelled inside a `data:` URI.
@@ -702,6 +989,14 @@ mod tests {
       prefix,
       base_class: false,
     }
+  }
+
+  /// The page down to the detail dialog: the grid, its headings and its
+  /// cards. The dialog and the script that fills it are the same on every
+  /// page and carry words -- a heading, the name of a color bucket -- that a
+  /// test about the grid should not be counting.
+  fn grid(page: &str) -> &str {
+    page.split("<dialog").next().unwrap()
   }
 
   fn icon(name: &str, codepoint: char) -> Icon {
@@ -878,7 +1173,7 @@ mod tests {
       classes("icon"),
       "f.css",
     );
-    assert!(!page.contains("partly fixed"));
+    assert!(!page.contains(">partly fixed</code>"));
     assert!(!page.contains(">fixed</code>"));
   }
 
@@ -1006,7 +1301,7 @@ mod tests {
     assert!(page.contains(">social</h2>"));
     // Top-level icons sit in a section with no heading.
     assert!(page.contains(r#"data-group=""#));
-    assert_eq!(page.matches("<h2").count(), 2);
+    assert_eq!(grid(&page).matches("<h2").count(), 2);
   }
 
   #[test]
@@ -1018,7 +1313,7 @@ mod tests {
       "f.css",
     );
     assert_eq!(page.matches("<section").count(), 1);
-    assert!(!page.contains("<h2"));
+    assert!(!grid(&page).contains("<h2"));
   }
 
   #[test]
@@ -1030,6 +1325,50 @@ mod tests {
       "f.css",
     );
     assert!(page.contains(r#"data-search="arrows-left icon-arrows-left e900 arrows""#));
+  }
+
+  #[test]
+  fn a_card_carries_what_the_detail_dialog_reads() {
+    // The dialog is one empty shell filled in from the card that was clicked,
+    // so the card has to carry the icon's full name and codepoint, and the
+    // glyph has to be something to click.
+    let page = render(
+      &[grouped("left", '\u{e901}', Some("arrows"))],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+
+    assert!(page.contains(r#"data-name="arrows-left""#));
+    assert!(page.contains(r#"data-code="e901""#));
+    assert!(page.contains(r#"aria-label="Open left""#));
+    // The leaf name is picked out for matching names against each other.
+    assert!(page.contains(r#"class="card-name"#));
+  }
+
+  #[test]
+  fn the_page_carries_one_empty_detail_dialog() {
+    // Not one per icon: the markup is the same whichever card is open, and a
+    // large set would otherwise carry a copy of it for every glyph.
+    let icons = vec![icon("one", '\u{e900}'), icon("two", '\u{e901}')];
+    let page = render(&icons, "Icons", classes("icon"), "f.css");
+
+    assert_eq!(page.matches("<dialog").count(), 1);
+    assert!(page.contains(r#"id="detail-glyph""#));
+    assert!(page.contains(r#"id="detail-related""#));
+    // Class, markup and codepoint are each offered on their own row.
+    assert!(page.contains(r#"id="copy-class""#));
+    assert!(page.contains(r#"id="copy-html""#));
+    assert!(page.contains(r#"id="copy-css""#));
+  }
+
+  #[test]
+  fn the_toast_can_reach_above_the_dialog() {
+    // A modal dialog is in the top layer, which an ordinary fixed element
+    // cannot reach -- so a copy made from the dialog would have nothing to
+    // show for itself.
+    let page = render(&[icon("ok", '\u{e900}')], "Icons", classes("icon"), "f.css");
+    assert!(page.contains(r#"<div id="toast" popover="manual""#));
   }
 
   #[test]
