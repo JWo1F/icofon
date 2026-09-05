@@ -1,7 +1,9 @@
 //! A browsable preview page listing every icon in the generated font.
 
+use kurbo::{PathEl, Shape};
+
 use crate::css::Classes;
-use crate::font::Icon;
+use crate::font::{ASCENDER, DESCENDER, Icon, UNITS_PER_EM};
 use crate::svg::Coloring;
 
 /// Tailwind's browser build compiles utility classes at runtime, so the preview
@@ -164,6 +166,9 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
 
 </div>
 <script>
+  // The font's own grid, so the dialog can place its guides and read its
+  // numbers out of the same constants the font was built from.
+  const EM = {{ units: {units}, ascender: {ascender}, descender: {descender} }};
 {script}
 </script>
 </body>
@@ -172,7 +177,10 @@ pub fn render(icons: &[Icon], family: &str, classes: Classes<'_>, css_url: &str)
     script = SCRIPT,
     home = HOMEPAGE,
     logo = LOGO_SVG,
-    detail = DETAIL,
+    detail = detail(recolorable(icons)),
+    units = UNITS_PER_EM,
+    ascender = ASCENDER,
+    descender = DESCENDER,
   ));
 
   page
@@ -203,10 +211,7 @@ const KINDS: [(&str, &str, &str); 3] = [
 /// artwork's has no such part, so the controls would move a swatch ring around
 /// and change nothing on the page.
 fn ink_controls(icons: &[Icon]) -> String {
-  let recolorable = icons
-    .iter()
-    .any(|icon| matches!(icon.outline.coloring, Coloring::Single | Coloring::Mixed));
-  if !recolorable {
+  if !recolorable(icons) {
     return String::new();
   }
 
@@ -228,7 +233,7 @@ fn ink_controls(icons: &[Icon]) -> String {
 {swatches}        </div>
         <span class="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-800"></span>
         <label class="picker-ring ring-1 ring-black/10 dark:ring-white/20" title="Choose any color">
-          <input id="picker" type="color" value="#2563eb">
+          <input id="picker" class="ink-picker" type="color" value="#2563eb">
         </label>
         <span id="color-note" class="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"></span>
       </div>
@@ -397,6 +402,71 @@ fn section_open(group: Option<&str>) -> String {
   )
 }
 
+/// Whether anything in the set follows the CSS `color` at all.
+fn recolorable(icons: &[Icon]) -> bool {
+  icons
+    .iter()
+    .any(|icon| matches!(icon.outline.coloring, Coloring::Single | Coloring::Mixed))
+}
+
+/// What the font knows about one glyph's outline, in the font's own units.
+struct Metrics {
+  /// Tight bounds of the ink — x0 y0 x1 y1 — or none when nothing is drawn.
+  bounds: Option<[i32; 4]>,
+  /// Closed loops in the outline, and the anchor points that make them up.
+  /// Together they are how heavy the glyph is to draw, which is the one thing
+  /// about an outline a page pays for.
+  contours: usize,
+  nodes: usize,
+}
+
+/// Measure a glyph the way the dialog reports it.
+///
+/// The bounds are the curves' own, not the integer box the compiled glyph
+/// carries, so they can sit half a unit off what a font inspector prints. That
+/// is below what any of these numbers is read for.
+fn measure(icon: &Icon) -> Metrics {
+  let path = &icon.outline.path;
+  let bounds = path.segments().next().map(|_| {
+    let box_ = path.bounding_box();
+    [
+      box_.x0.round() as i32,
+      box_.y0.round() as i32,
+      box_.x1.round() as i32,
+      box_.y1.round() as i32,
+    ]
+  });
+  let mut contours = 0;
+  let mut nodes = 0;
+  for element in path.elements() {
+    match element {
+      PathEl::MoveTo(_) => {
+        contours += 1;
+        nodes += 1;
+      }
+      // A close draws no new point: it returns to the one the contour opened on.
+      PathEl::ClosePath => {}
+      _ => nodes += 1,
+    }
+  }
+  Metrics {
+    bounds,
+    contours,
+    nodes,
+  }
+}
+
+/// The file an icon was drawn from, without the path to the icon folder — that
+/// part is the same for every icon and says nothing, and it is the one part
+/// that differs between machines.
+fn file_name(icon: &Icon) -> String {
+  icon
+    .source
+    .file_name()
+    .map(|name| name.to_string_lossy().into_owned())
+    .unwrap_or_default()
+}
+
 fn note(text: &str) -> String {
   format!(
     r#"
@@ -423,6 +493,18 @@ fn card(icon: &Icon, classes: Classes<'_>, mark_color: bool) -> String {
     Coloring::Mixed => note("partly fixed"),
     Coloring::Fixed => note("fixed"),
   };
+  // What the dialog reports about the glyph. Carried on the card because the
+  // dialog is filled from whichever card was clicked, so the page holds one
+  // copy of every icon's facts rather than a second table of them.
+  let metrics = measure(icon);
+  let bounds = match metrics.bounds {
+    Some([x0, y0, x1, y1]) => format!("{x0} {y0} {x1} {y1}"),
+    None => String::new(),
+  };
+  let file = match &icon.group {
+    Some(group) => format!("{group}/{}", file_name(icon)),
+    None => file_name(icon),
+  };
   let width_note = if aspect >= 1.5 {
     format!(
       r#"
@@ -434,7 +516,8 @@ fn card(icon: &Icon, classes: Classes<'_>, mark_color: bool) -> String {
 
   format!(
     r#"    <figure data-search="{search}" data-kind="{kind}" data-group="{group}" data-name="{full}"
-            data-code="{code:04x}" style="--aspect:{aspect:.3}"
+            data-code="{code:04x}" data-bbox="{bounds}" data-outline="{contours} {nodes}"
+            data-file="{file}" style="--aspect:{aspect:.3}"
             class="card m-0 flex flex-col items-center gap-3 rounded-xl border border-zinc-200
                    px-3 pt-5 pb-3.5 text-center dark:border-zinc-800">
       <button type="button" class="open cursor-pointer" aria-label="Open {name}">
@@ -478,6 +561,10 @@ fn card(icon: &Icon, classes: Classes<'_>, mark_color: bool) -> String {
     full = escape(&icon.name),
     code = code,
     aspect = aspect,
+    bounds = bounds,
+    contours = metrics.contours,
+    nodes = metrics.nodes,
+    file = escape(&file),
     width_note = width_note,
     color_note = color_note,
     kind = kind_of(icon),
@@ -495,17 +582,56 @@ const SWATCHES: [&str; 9] = [
 /// The detail dialog: one icon, large, with everything the card had to
 /// abbreviate spelled out beside it.
 ///
-/// The markup is static and empty -- a set of a thousand icons would otherwise
-/// carry a thousand copies of it -- and the script fills it in from the card
-/// that was clicked. Nothing here is generated, so it is a constant.
-const DETAIL: &str = r##"<dialog id="detail" class="detail" aria-labelledby="detail-name">
+/// The markup is empty -- a set of a thousand icons would otherwise carry a
+/// thousand copies of it -- and the script fills it in from the card that was
+/// clicked. Only the font's own grid and the preview controls are written in
+/// here, because both are the same for every icon in the set.
+fn detail(recolorable: bool) -> String {
+  let ink = if recolorable {
+    format!(
+      r##"        <div class="stage-row">
+          <span class="stage-key">Ink</span>
+{swatches}          <label class="picker-ring ring-1 ring-black/10 dark:ring-white/20" title="Choose any ink">
+            <input id="detail-picker" class="ink-picker" type="color" value="#2563eb">
+          </label>
+          <span id="ink-dead" hidden class="stage-hint">fixed by the artwork</span>
+        </div>
+"##,
+      swatches = stage_swatches("color", "swatch", "background:")
+    )
+  } else {
+    String::new()
+  };
+
+  format!(
+    r##"<dialog id="detail" class="detail" aria-labelledby="detail-name">
   <div class="detail-shell" tabindex="-1" autofocus>
 
     <div class="stage">
-      <div class="em-box">
-        <span id="detail-glyph" class="stage-glyph" aria-hidden="true"></span>
+      <div id="canvas" class="canvas" data-guides="on">
+        <div class="em-box">
+          <span id="detail-glyph" class="stage-glyph" aria-hidden="true"></span>
+          <span id="detail-bbox" class="ink-box"></span>
+          <span id="bearing-start" class="bearing"></span>
+          <span id="bearing-end" class="bearing"></span>
+          <span class="rule" style="--at:0%" data-label="ascender"></span>
+          <span id="rule-base" class="rule" data-label="baseline"></span>
+          <span class="rule" style="--at:100%" data-label="descender"></span>
+        </div>
+        <span id="detail-advance" class="stage-caption font-mono"></span>
+        <button type="button" id="guides" class="stage-toggle font-mono" aria-pressed="true"
+                title="Show or hide the metrics">guides</button>
       </div>
-      <span id="detail-advance" class="stage-caption font-mono"></span>
+      <div class="stage-bar">
+{ink}        <div class="stage-row">
+          <span class="stage-key">Back</span>
+          <button type="button" data-bg="" title="The preview's own background"
+                  class="bg-swatch size-5 cursor-pointer rounded-full border border-black/10 dark:border-white/15"></button>
+{backdrops}          <label class="picker-ring ring-1 ring-black/10 dark:ring-white/20" title="Choose any background">
+            <input id="detail-bg-picker" type="color" value="#ffffff">
+          </label>
+        </div>
+      </div>
     </div>
 
     <aside class="side">
@@ -513,7 +639,7 @@ const DETAIL: &str = r##"<dialog id="detail" class="detail" aria-labelledby="det
         <div class="min-w-0">
           <p id="detail-folder" class="font-mono text-[10px] tracking-[0.22em] text-zinc-400 uppercase dark:text-zinc-500"></p>
           <h2 id="detail-name" class="font-display text-[clamp(1.35rem,3vw,1.85rem)] leading-[1.05] tracking-tight break-all"></h2>
-          <p id="detail-meta" class="mt-1.5 font-mono text-[11px] text-zinc-400 dark:text-zinc-500"></p>
+          <p id="detail-meta" class="mt-1.5 font-mono text-[11px] break-all text-zinc-400 dark:text-zinc-500"></p>
         </div>
         <button type="button" id="detail-close" aria-label="Close" title="Close (Esc)"
                 class="-mt-1 -mr-1 size-8 shrink-0 cursor-pointer rounded-full text-[13px] leading-none
@@ -534,6 +660,15 @@ const DETAIL: &str = r##"<dialog id="detail" class="detail" aria-labelledby="det
       </div>
 
       <div class="mt-6">
+        <p class="font-mono text-[10px] tracking-[0.22em] text-zinc-400 uppercase dark:text-zinc-500">Metrics</p>
+        <dl id="detail-metrics" class="metrics mt-2"></dl>
+        <p id="detail-spill" hidden class="mt-2 text-[12px] text-zinc-500 dark:text-zinc-400"></p>
+        <p class="mt-2 font-mono text-[10px] text-zinc-300 dark:text-zinc-600">
+          {units} units/em &#183; ascender {ascender} &#183; descender {descender}
+        </p>
+      </div>
+
+      <div class="mt-6">
         <p class="font-mono text-[10px] tracking-[0.22em] text-zinc-400 uppercase dark:text-zinc-500">Similar names</p>
         <div id="detail-related" class="related-grid mt-2"></div>
         <p id="detail-lonely" hidden class="mt-2 text-[12px] text-zinc-400 dark:text-zinc-500">
@@ -550,7 +685,29 @@ const DETAIL: &str = r##"<dialog id="detail" class="detail" aria-labelledby="det
 
   </div>
 </dialog>
-"##;
+"##,
+    ink = ink,
+    backdrops = stage_swatches("bg", "bg-swatch", "background:"),
+    units = UNITS_PER_EM,
+    ascender = ASCENDER,
+    descender = DESCENDER,
+  )
+}
+
+/// One row of preset colors for the dialog's stage, smaller than the ones in
+/// the bar: the stage has two rows to fit where the bar had one.
+fn stage_swatches(attribute: &str, class: &str, style: &str) -> String {
+  SWATCHES
+    .iter()
+    .map(|color| {
+      format!(
+        "          <button type=\"button\" data-{attribute}=\"{color}\" title=\"{color}\"\n\
+         \x20                 class=\"{class} size-5 cursor-pointer rounded-full border \
+         border-black/10 dark:border-white/15\" style=\"{style}{color}\"></button>\n"
+      )
+    })
+    .collect()
+}
 
 const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.card'));
   const groups = Array.from(document.querySelectorAll('.icon-group'));
@@ -566,8 +723,11 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   // drawn with currentColor pick it up; COLR icons keep the colors baked into
   // the font.
   const grid = document.documentElement;
+  // The bar has one set of ink controls and the dialog another, so that the
+  // color can be changed without closing the icon being judged. Both drive the
+  // same property: there is one ink, wherever it was set from.
   const swatches = Array.from(document.querySelectorAll('.swatch'));
-  const picker = document.getElementById('picker');
+  const pickers = Array.from(document.querySelectorAll('.ink-picker'));
   const colorNote = document.getElementById('color-note');
 
   const BLACK = '#000000';
@@ -580,7 +740,7 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
     ink = (color || BLACK).toLowerCase();
     grid.style.setProperty('--icon-color', ink);
     if (colorNote) colorNote.textContent = ink;
-    if (picker) picker.value = ink;
+    for (const picker of pickers) picker.value = ink;
     for (const swatch of swatches) {
       const on = swatch.dataset.color.toLowerCase() === ink;
       swatch.classList.toggle('ring-2', on);
@@ -592,10 +752,72 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   for (const swatch of swatches) {
     swatch.addEventListener('click', () => applyColor(swatch.dataset.color));
   }
-  if (picker) picker.addEventListener('input', () => applyColor(picker.value));
+  for (const picker of pickers) {
+    picker.addEventListener('input', () => applyColor(picker.value));
+  }
   let storedColor = '';
   try { storedColor = localStorage.getItem('icofon-color') || ''; } catch {}
   applyColor(storedColor);
+
+  // The color the icon is judged against. An icon drawn for a white page and
+  // an icon drawn for a dark one are different drawings, and the only way to
+  // tell which you have is to put it on the background it is going to live on.
+  // Separate from the page theme, which moves the whole preview at once.
+  const canvas = document.getElementById('canvas');
+  const backdrops = Array.from(document.querySelectorAll('.bg-swatch'));
+  const bgPicker = document.getElementById('detail-bg-picker');
+
+  // How the guides are drawn over a dark backdrop and over a light one. The
+  // page's own values are left alone: without a backdrop the stage is the page.
+  const GUIDES_ON_DARK = [['--rule', 'rgba(250,250,250,.34)'],
+                          ['--grid', 'rgba(250,250,250,.08)'],
+                          ['--faint', 'rgba(250,250,250,.5)']];
+  const GUIDES_ON_LIGHT = [['--rule', 'rgba(9,9,11,.26)'],
+                           ['--grid', 'rgba(9,9,11,.07)'],
+                           ['--faint', 'rgba(9,9,11,.45)']];
+
+  // Whether text drawn dark would read on this color. sRGB relative luminance,
+  // the same measure a contrast ratio is built from.
+  function isLight(hex) {
+    const packed = parseInt(hex.slice(1), 16);
+    if (!Number.isFinite(packed)) return true;
+    const channel = (value) => {
+      value /= 255;
+      return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(packed >> 16 & 255)
+         + 0.7152 * channel(packed >> 8 & 255)
+         + 0.0722 * channel(packed & 255) > 0.35;
+  }
+
+  function applyBackdrop(color) {
+    const backdrop = (color || '').toLowerCase();
+    // Empty is the preview's own surface, grid and all -- a color under the
+    // grid reads as neither the color asked for nor a grid.
+    if (backdrop) canvas.dataset.bg = backdrop; else delete canvas.dataset.bg;
+    canvas.style.setProperty('--backdrop', backdrop || 'transparent');
+    // A guide drawn in the page's ink vanishes on a backdrop chosen to be
+    // nothing like the page, so the guides follow the backdrop instead.
+    for (const [name, value] of (isLight(backdrop) ? GUIDES_ON_LIGHT : GUIDES_ON_DARK)) {
+      if (backdrop) canvas.style.setProperty(name, value);
+      else canvas.style.removeProperty(name);
+    }
+    if (bgPicker && backdrop) bgPicker.value = backdrop;
+    for (const swatch of backdrops) {
+      const on = swatch.dataset.bg.toLowerCase() === backdrop;
+      swatch.classList.toggle('ring-2', on);
+      swatch.classList.toggle('ring-blue-500', on);
+      swatch.classList.toggle('ring-offset-1', on);
+    }
+    try { localStorage.setItem('icofon-backdrop', backdrop); } catch {}
+  }
+  for (const swatch of backdrops) {
+    swatch.addEventListener('click', () => applyBackdrop(swatch.dataset.bg));
+  }
+  if (bgPicker) bgPicker.addEventListener('input', () => applyBackdrop(bgPicker.value));
+  let storedBackdrop = '';
+  try { storedBackdrop = localStorage.getItem('icofon-backdrop') || ''; } catch {}
+  applyBackdrop(storedBackdrop);
 
   const themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
   function paintTheme() {
@@ -731,6 +953,32 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
   const copyClass = document.getElementById('copy-class');
   const copyHtml = document.getElementById('copy-html');
   const copyCss = document.getElementById('copy-css');
+  const detailMetrics = document.getElementById('detail-metrics');
+  const detailSpill = document.getElementById('detail-spill');
+  const detailBbox = document.getElementById('detail-bbox');
+  const bearingStart = document.getElementById('bearing-start');
+  const bearingEnd = document.getElementById('bearing-end');
+  const inkDead = document.getElementById('ink-dead');
+
+  // The guides are placed from the font's own grid rather than from numbers
+  // written into the stylesheet, so the baseline is drawn where the baseline
+  // is even if the em is ever divided differently.
+  document.getElementById('rule-base').style.setProperty(
+    '--at', (100 * EM.ascender / (EM.ascender - EM.descender)) + '%');
+
+  // Measurements drawn over the artwork are what you want while judging the
+  // metrics and the last thing you want while judging the drawing, so they
+  // come off in one click -- and stay off.
+  const guides = document.getElementById('guides');
+  function applyGuides(on) {
+    canvas.dataset.guides = on ? 'on' : 'off';
+    guides.setAttribute('aria-pressed', String(on));
+    try { localStorage.setItem('icofon-guides', on ? 'on' : 'off'); } catch {}
+  }
+  guides.addEventListener('click', () => applyGuides(canvas.dataset.guides !== 'on'));
+  let storedGuides = '';
+  try { storedGuides = localStorage.getItem('icofon-guides') || ''; } catch {}
+  applyGuides(storedGuides !== 'off');
 
   // What the color buckets are called in a sentence. On a card the label is
   // dropped when every icon shares it, since it would then draw no
@@ -752,7 +1000,53 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
       selector: name.textContent,
       aspect: Number(card.style.getPropertyValue('--aspect')) || 1,
       kind: KINDS[card.dataset.kind] || '',
+      file: card.dataset.file || '',
+      // A glyph with nothing drawn in it has no bounds to report, and every
+      // number taken from them has to give way rather than read as zero.
+      bounds: card.dataset.bbox ? card.dataset.bbox.split(' ').map(Number) : null,
+      outline: card.dataset.outline.split(' ').map(Number),
     };
+  }
+
+  // Font units carry a sign, and a hyphen in a column of measurements reads as
+  // a dash between them. The real minus does not.
+  const signed = (value) => (value < 0 ? '\u2212' + Math.abs(value) : String(value));
+  const plural = (count, thing) => count + ' ' + thing + (count === 1 ? '' : 's');
+
+  // The glyph as the font holds it: what it is given, what it uses of that,
+  // and what it costs to draw. Everything is in font units, which the note
+  // under the list ties back to the em.
+  function metrics(icon) {
+    const advance = Math.round(icon.aspect * EM.units);
+    const rows = [['Advance', advance + ' u \u00b7 ' + icon.aspect.toFixed(2) + ' em']];
+    if (icon.bounds) {
+      const [x0, y0, x1, y1] = icon.bounds;
+      rows.push(['Ink', (x1 - x0) + ' \u00d7 ' + (y1 - y0) + ' u']);
+      rows.push(['Across', signed(x0) + ' \u2192 ' + signed(x1)]);
+      rows.push(['Up', signed(y0) + ' \u2192 ' + signed(y1)]);
+      rows.push(['Bearings', signed(x0) + ' left \u00b7 ' + signed(advance - x1) + ' right']);
+    } else {
+      rows.push(['Ink', 'nothing drawn']);
+    }
+    rows.push(['Outline',
+      plural(icon.outline[0], 'contour') + ' \u00b7 ' + plural(icon.outline[1], 'node')]);
+    if (icon.file) rows.push(['File', icon.file]);
+    return rows;
+  }
+
+  // Where the glyph runs past the box the font gave it. Harmless on its own --
+  // nothing clips it -- but it is what makes one icon sit taller than its
+  // neighbours in a line of text, or touch the next one along.
+  function spill(icon) {
+    if (!icon.bounds) return '';
+    const advance = Math.round(icon.aspect * EM.units);
+    const [x0, y0, x1, y1] = icon.bounds;
+    const past = [];
+    if (y1 > EM.ascender) past.push((y1 - EM.ascender) + ' u above the ascender');
+    if (y0 < EM.descender) past.push((EM.descender - y0) + ' u below the descender');
+    if (x0 < 0) past.push((-x0) + ' u left of the origin');
+    if (x1 > advance) past.push((x1 - advance) + ' u past the advance');
+    return past.length ? 'Runs ' + past.join(', ') + '.' : '';
   }
 
   // Names are matched on the leaf, not on the full name: the folder is
@@ -823,6 +1117,39 @@ const SCRIPT: &str = r#"  const cards = Array.from(document.querySelectorAll('.c
     detailMeta.textContent =
       ['U+' + icon.code.toUpperCase(), icon.kind].filter(Boolean).join(' · ');
     detailAdvance.textContent = icon.aspect.toFixed(2) + ' em advance';
+
+    // The numbers, and the same numbers drawn on the glyph: the ink's own box
+    // inside the em box, and the side bearings as the gaps either side of it.
+    detailMetrics.replaceChildren(...metrics(icon).flatMap(([key, value]) => {
+      const term = document.createElement('dt');
+      term.textContent = key;
+      const detail = document.createElement('dd');
+      detail.textContent = value;
+      return [term, detail];
+    }));
+    const past = spill(icon);
+    detailSpill.textContent = past;
+    detailSpill.hidden = !past;
+
+    detailBbox.hidden = !icon.bounds;
+    bearingStart.hidden = !icon.bounds;
+    bearingEnd.hidden = !icon.bounds;
+    if (icon.bounds) {
+      const advance = Math.round(icon.aspect * EM.units);
+      const [x0, y0, x1, y1] = icon.bounds;
+      const across = (units) => (100 * units / advance) + '%';
+      const up = (units) => (100 * units / (EM.ascender - EM.descender)) + '%';
+      detailBbox.style.left = across(x0);
+      detailBbox.style.right = across(advance - x1);
+      detailBbox.style.top = up(EM.ascender - y1);
+      detailBbox.style.bottom = up(y0 - EM.descender);
+      bearingStart.style.width = across(Math.max(x0, 0));
+      bearingEnd.style.width = across(Math.max(advance - x1, 0));
+    }
+
+    // The ink controls move nothing on an icon whose colors are all the
+    // artwork's, so they say so rather than looking broken.
+    if (inkDead) inkDead.hidden = icon.kind !== KINDS.fixed;
 
     // The selector is what a stylesheet matches on and the attribute is what
     // a class attribute takes, so each row shows the one and copies the other.
@@ -1092,7 +1419,42 @@ mod tests {
     // Every swatch is a real color: there is no "inherit" option to leave
     // the readout blank.
     assert!(!page.contains(r#"data-color="""#));
-    assert!(page.contains(r#"id="picker" type="color""#));
+    assert!(page.contains(r#"id="picker" class="ink-picker" type="color""#));
+    // The dialog carries its own ink and background controls, so an icon can
+    // be tried on a color without closing the one being looked at.
+    assert!(page.contains(r#"id="detail-picker" class="ink-picker" type="color""#));
+    assert!(page.contains(r#"id="detail-bg-picker" type="color""#));
+    assert!(page.contains(r##"data-bg="#000000""##));
+    // The one background that is not a color: the preview's own surface.
+    assert!(page.contains(r#"data-bg="""#));
+  }
+
+  #[test]
+  fn a_card_carries_the_glyph_metrics_the_dialog_reports() {
+    // The dialog is filled from the card that was clicked, so everything it
+    // has to say about a glyph must already be on the card.
+    let page = render(
+      &[icon("square", '\u{e900}')],
+      "Icons",
+      classes("icon"),
+      "f.css",
+    );
+    // The icon is one rect drawn edge to edge in its viewBox, so it fills the
+    // em box exactly: the full advance across, ascender to descender up.
+    assert!(page.contains(r#"data-bbox="0 -200 1000 800""#), "{page}");
+    assert!(page.contains(r#"data-outline="1 4""#), "{page}");
+    assert!(page.contains(r#"data-file="square""#), "{page}");
+  }
+
+  #[test]
+  fn a_blank_glyph_reports_no_bounds_rather_than_a_point_at_the_origin() {
+    // Nothing drawn is not the same as something drawn at zero size, and the
+    // metrics have to say so rather than reporting a box with no width.
+    let mut blank = icon("blank", '\u{e900}');
+    blank.outline.path = kurbo::BezPath::new();
+    let page = render(&[blank], "Icons", classes("icon"), "f.css");
+    assert!(page.contains(r#"data-bbox="" "#), "{page}");
+    assert!(page.contains(r#"data-outline="0 0""#), "{page}");
   }
 
   #[test]

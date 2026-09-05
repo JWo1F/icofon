@@ -44,18 +44,21 @@
   /* A color input is a bordered square by default. It is made round, and then
      ringed in spectrum so it reads as "choose any color" rather than as one
      more preset to pick from. */
-  #picker {
+  .picker-ring input {
     -webkit-appearance: none; appearance: none;
     padding: 0; border: none; background: none;
     border-radius: 9999px; overflow: hidden;
     width: 100%; height: 100%; display: block;
   }
-  #picker::-webkit-color-swatch-wrapper { padding: 0; }
-  #picker::-webkit-color-swatch { border: none; border-radius: 9999px; }
-  #picker::-moz-color-swatch { border: none; border-radius: 9999px; }
+  .picker-ring input::-webkit-color-swatch-wrapper { padding: 0; }
+  .picker-ring input::-webkit-color-swatch { border: none; border-radius: 9999px; }
+  .picker-ring input::-moz-color-swatch { border: none; border-radius: 9999px; }
   .picker-ring {
     background: conic-gradient(from 200deg, #ef4444, #f59e0b, #facc15, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444);
     padding: 2px; border-radius: 9999px; width: 1.6rem; height: 1.6rem;
+    /* In the dialog it sits in a flex row, which would otherwise stretch it
+       out of its circle. */
+    flex: 0 0 auto;
     display: grid; place-items: center; cursor: pointer;
     transition: transform .15s ease;
   }
@@ -109,18 +112,28 @@
   @keyframes detail-out { to { opacity: 0; transform: translateY(6px) scale(.99) } }
 
   /* The stage is square and as tall as the dialog, so the icon gets the whole
-     height whatever the sidebar does. Sized in container units, which is what
-     lets the glyph fill it without measuring anything in script. */
+     height whatever the sidebar does. The canvas inside it is what the glyph
+     is measured against, in container units, which is what lets the glyph fill
+     it without measuring anything in script. */
   .stage {
-    position: relative; flex: 0 0 auto; height: 100%; aspect-ratio: 1;
+    flex: 0 0 auto; height: 100%; aspect-ratio: 1;
+    display: flex; flex-direction: column; min-height: 0;
+    border-right: 1px solid var(--hair);
+  }
+  .canvas {
+    position: relative; flex: 1 1 auto; min-height: 0;
     display: grid; place-items: center;
     container-type: size;
-    border-right: 1px solid var(--hair);
+    background-color: var(--backdrop, transparent);
     background-image:
       linear-gradient(to right, var(--grid) 1px, transparent 1px),
       linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
     background-size: 12.5% 12.5%;
+    transition: background-color .15s ease;
   }
+  /* A grid drawn over a chosen background reads as neither, so once there is a
+     background it is the background you see. */
+  .canvas[data-bg] { background-image: none; }
 
   /* The em box is not drawn around the glyph -- it *is* the glyph's own box.
      The font spans exactly one em from ascender to descender, so at a line
@@ -133,25 +146,97 @@
     color: var(--icon-color, inherit);
     outline: 1px dashed var(--rule);
   }
-  /* The baseline: the descender is 200 of the em's 1000 units, so it sits a
-     fifth of the way up from the bottom of the box. It is drawn as two ticks
-     reaching in from outside rather than as one rule, which would otherwise
+
+  /* One horizontal metric, `--at` down from the top of the em box. Drawn as
+     two ticks reaching in from outside rather than as one rule, which would
      be a line struck through the artwork. */
-  .em-box::before {
-    content: ""; position: absolute; left: -12%; right: -12%; bottom: 20%; height: 1px;
+  .rule {
+    position: absolute; left: -12%; right: -12%; top: var(--at); height: 1px;
     background: linear-gradient(90deg,
       var(--rule) 0 9%, transparent 9% 91%, var(--rule) 91% 100%);
   }
-  .em-box::after {
-    content: "baseline"; position: absolute; right: 100%; bottom: calc(20% + .3rem);
+  .rule::after {
+    content: attr(data-label); position: absolute; right: 100%; bottom: .3rem;
     margin-right: .6rem; white-space: nowrap;
     font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em;
     text-transform: uppercase; color: var(--faint);
   }
+  /* The last label would otherwise sit under the box it belongs to. */
+  .rule[data-label="descender"]::after { bottom: auto; top: .3rem; }
+
+  /* What the glyph actually uses of the box it was given: the ink's own
+     bounds, and the side bearings as the space left over either side. Placed
+     from the font's numbers, so the two agree by construction. */
+  .ink-box {
+    position: absolute; pointer-events: none;
+    outline: 1px solid color-mix(in srgb, #2563eb 55%, transparent);
+  }
+  .bearing {
+    position: absolute; top: 0; bottom: 0; pointer-events: none;
+    background: repeating-linear-gradient(-45deg,
+      var(--grid) 0 2px, transparent 2px 5px);
+  }
+  #bearing-start { left: 0; }
+  #bearing-end { right: 0; }
+
+  /* Off, the stage is the artwork and nothing else -- which is the only way to
+     judge the drawing rather than the numbers. */
+  .canvas[data-guides="off"] .rule,
+  .canvas[data-guides="off"] .ink-box,
+  .canvas[data-guides="off"] .bearing { display: none; }
+  .canvas[data-guides="off"] .stage-glyph { outline: none; }
+
   .stage-caption {
     position: absolute; bottom: .875rem; left: 1rem;
     font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--faint);
   }
+  .stage-toggle {
+    position: absolute; bottom: .75rem; right: .875rem; cursor: pointer;
+    padding: .25rem .5rem; border-radius: 9999px;
+    border: 1px solid var(--rule); background: none;
+    font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--faint);
+    transition: color .15s ease, border-color .15s ease;
+  }
+  /* On, it reads in the guides' own ink -- it is one of them. */
+  .stage-toggle[aria-pressed="true"] { color: var(--rule); border-color: var(--rule); }
+
+  /* The ink and the background it is judged on. Both live under the stage
+     rather than in the sidebar, because what they change is the picture. */
+  .stage-bar {
+    flex: 0 0 auto; display: flex; flex-direction: column; gap: .375rem;
+    padding: .625rem .875rem; border-top: 1px solid var(--hair); background: var(--bar);
+  }
+  .stage-row { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
+  .stage-key {
+    flex: 0 0 2.5rem;
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .stage-hint {
+    font-family: var(--font-mono); font-size: 9px; color: var(--faint);
+    margin-left: .25rem;
+  }
+  /* The background that is not a color: the preview's own surface. */
+  .bg-swatch[data-bg=""] {
+    background:
+      linear-gradient(45deg, transparent 46%, var(--rule) 46% 54%, transparent 54%),
+      var(--bar);
+  }
+  .bg-swatch { transition: transform .15s ease; }
+  .bg-swatch:hover { transform: scale(1.15); }
+
+  /* The metrics, as a column of labelled numbers rather than prose: they are
+     read by comparing one icon against the next, and a column is what makes
+     that possible. */
+  .metrics {
+    display: grid; grid-template-columns: 5rem 1fr; gap: .25rem .75rem;
+    margin: 0; font-family: var(--font-mono); font-size: 11px;
+  }
+  .metrics dt {
+    font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--faint); align-self: center;
+  }
+  .metrics dd { margin: 0; overflow-wrap: anywhere; }
 
   .side {
     flex: 1 1 auto; min-width: 0;
@@ -237,11 +322,13 @@
     dialog.detail { width: 94vw; height: 88vh; }
     .detail-shell { flex-direction: column; }
     .stage {
-      width: 100%; height: auto; max-height: 45%; aspect-ratio: 1;
+      width: 100%; height: auto; max-height: 52%; aspect-ratio: auto;
       border-right: none; border-bottom: 1px solid var(--hair);
     }
+    .canvas { min-height: 11rem; }
     .side { padding: 1.125rem 1.125rem .25rem; }
-    .em-box::after { display: none; }
+    /* No room beside the box for the labels; the numbers are in the sidebar. */
+    .rule::after { display: none; }
   }
 
   /* The toast has to clear the dialog, and only the top layer does. A popover
